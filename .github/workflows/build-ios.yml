@@ -1,0 +1,140 @@
+# Build iOS .ipa — CHỈ chạy khi bấm nút thủ công trên GitHub Actions tab.
+# KHÔNG có trigger push/pull_request — sẽ không tự chạy khi commit.
+
+name: Build iOS IPA
+
+on:
+  workflow_dispatch:
+    inputs:
+      notes:
+        description: "Ghi chú cho lần build này (tùy chọn)"
+        required: false
+        default: ""
+
+jobs:
+  build:
+    name: Build RPGPlayer (unsigned IPA)
+    runs-on: macos-14
+
+    steps:
+      # ── 1. Checkout ──────────────────────────────────────────────────────────
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      # ── 2. Chọn Xcode version ─────────────────────────────────────────────
+      # macos-14 có sẵn Xcode 15.x và 16.x. Pin 15.4 cho ổn định với iOS 17 SDK.
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode_15.4.app
+        continue-on-error: true   # nếu không có 15.4, dùng default
+
+      - name: Show Xcode version
+        run: xcodebuild -version
+
+      # ── 3. Cài xcodegen & generate .xcodeproj ─────────────────────────────
+      # Không commit .xcodeproj vào repo là best practice với xcodegen.
+      # CI tự generate từ project.yml mỗi lần build.
+      - name: Install xcodegen
+        run: |
+          curl -sL https://github.com/yonaskolb/XcodeGen/releases/download/2.46.0/xcodegen.zip \
+            -o /tmp/xcodegen.zip
+          unzip -q /tmp/xcodegen.zip -d /tmp/xcodegen_bin
+          sudo cp /tmp/xcodegen_bin/xcodegen/bin/xcodegen /usr/local/bin/xcodegen
+          xcodegen --version
+
+      - name: Generate Xcode project
+        run: xcodegen generate --spec project.yml
+
+      # ── 4. Resolve SPM dependencies ───────────────────────────────────────
+      - name: Resolve Swift Package dependencies
+        run: |
+          xcodebuild \
+            -project RPGPlayer.xcodeproj \
+            -resolvePackageDependencies \
+            -clonedSourcePackagesDirPath SourcePackages
+
+      # ── 5. Archive (không ký) ──────────────────────────────────────────────
+      - name: Archive (CODE_SIGNING_ALLOWED=NO)
+        run: |
+          xcodebuild \
+            -project RPGPlayer.xcodeproj \
+            -scheme RPGPlayer \
+            -configuration Release \
+            -sdk iphoneos \
+            -archivePath build/RPGPlayer.xcarchive \
+            -clonedSourcePackagesDirPath SourcePackages \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            DEVELOPMENT_TEAM="" \
+            archive \
+            | xcpretty || true
+
+          # Fallback: nếu xcpretty chưa cài thì chạy lại không pipe
+          if [ ! -d "build/RPGPlayer.xcarchive" ]; then
+            echo "xcpretty fallback — re-running without pipe..."
+            xcodebuild \
+              -project RPGPlayer.xcodeproj \
+              -scheme RPGPlayer \
+              -configuration Release \
+              -sdk iphoneos \
+              -archivePath build/RPGPlayer.xcarchive \
+              -clonedSourcePackagesDirPath SourcePackages \
+              CODE_SIGNING_ALLOWED=NO \
+              CODE_SIGNING_REQUIRED=NO \
+              CODE_SIGN_IDENTITY="" \
+              DEVELOPMENT_TEAM="" \
+              archive
+          fi
+
+      # ── 6. Đóng gói .ipa thủ công (không cần provisioning profile) ────────
+      # Cách này tạo IPA thô (unsigned). AltServer/Sideloadly sẽ ký lại khi sideload.
+      - name: Package unsigned IPA
+        run: |
+          ARCHIVE="build/RPGPlayer.xcarchive"
+          APP_PATH="$ARCHIVE/Products/Applications/RPGPlayer.app"
+          PAYLOAD_DIR="build/Payload"
+          IPA_PATH="build/RPGPlayer-unsigned.ipa"
+
+          if [ ! -d "$APP_PATH" ]; then
+            echo "❌ Không tìm thấy RPGPlayer.app trong archive!"
+            ls -la "$ARCHIVE/Products/" 2>/dev/null || echo "(thư mục Products không tồn tại)"
+            exit 1
+          fi
+
+          mkdir -p "$PAYLOAD_DIR"
+          cp -R "$APP_PATH" "$PAYLOAD_DIR/RPGPlayer.app"
+
+          cd build
+          zip -qr "RPGPlayer-unsigned.ipa" Payload/
+          cd ..
+
+          echo "✅ IPA đã tạo: $IPA_PATH"
+          ls -lh "$IPA_PATH"
+
+      # ── 7. Upload artifact với tên kèm commit hash ────────────────────────
+      - name: Upload IPA artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: RPGPlayer-${{ github.sha }}-${{ github.run_number }}
+          path: build/RPGPlayer-unsigned.ipa
+          retention-days: 30
+          if-no-files-found: error
+
+      # ── 8. Summary ────────────────────────────────────────────────────────
+      - name: Build summary
+        if: always()
+        run: |
+          echo "## Build RPGPlayer" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Key | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|-----|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Commit | \`${{ github.sha }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Run # | ${{ github.run_number }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Notes | ${{ inputs.notes }} |" >> $GITHUB_STEP_SUMMARY
+          if [ -f "build/RPGPlayer-unsigned.ipa" ]; then
+            SIZE=$(du -sh build/RPGPlayer-unsigned.ipa | cut -f1)
+            echo "| IPA size | $SIZE |" >> $GITHUB_STEP_SUMMARY
+            echo "| Status | ✅ Thành công |" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "| Status | ❌ IPA không tạo được |" >> $GITHUB_STEP_SUMMARY
+          fi

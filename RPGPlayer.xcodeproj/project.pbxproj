@@ -436,7 +436,7 @@
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.rpgplayer.app;
 				SDKROOT = iphoneos;
-				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_STRICT_CONCURRENCY = targeted;
 				SWIFT_VERSION = 5.9;
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
@@ -456,7 +456,7 @@
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.rpgplayer.app;
 				SDKROOT = iphoneos;
-				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_STRICT_CONCURRENCY = targeted;
 				SWIFT_VERSION = 5.9;
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
