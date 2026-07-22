@@ -1,0 +1,72 @@
+name: RPGPlayer
+options:
+  bundleIdPrefix: com.rpgplayer
+  deploymentTarget:
+    iOS: "17.0"
+  xcodeVersion: "15.0"
+  groupSortPosition: top
+  generateEmptyDirectories: true
+  developmentLanguage: en
+
+packages:
+  ZIPFoundation:
+    url: https://github.com/weichsel/ZIPFoundation
+    from: "0.9.19"
+
+targets:
+  RPGPlayer:
+    type: application
+    platform: iOS
+    deploymentTarget: "17.0"
+    sources:
+      - path: RPGPlayer
+    resources:
+      - path: RPGPlayer/Resources
+    plist:
+      path: RPGPlayer/Info.plist
+      properties:
+        CFBundleName: RPG Player
+        CFBundleDisplayName: RPG Player
+        CFBundleIdentifier: com.rpgplayer.app
+        CFBundleVersion: "1"
+        CFBundleShortVersionString: "1.0"
+        UILaunchStoryboardName: ""
+        LSApplicationQueriesSchemes: []
+        UIRequiresFullScreen: true
+        UIStatusBarHidden: false
+        UIViewControllerBasedStatusBarAppearance: true
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        UISupportedInterfaceOrientations~ipad:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        NSDocumentsFolderUsageDescription: "RPG Player cần quyền truy cập file game của bạn."
+        UIFileSharingEnabled: false
+        LSSupportsOpeningDocumentsInPlace: false
+    settings:
+      PRODUCT_BUNDLE_IDENTIFIER: com.rpgplayer.app
+      SWIFT_VERSION: "5.9"
+      IPHONEOS_DEPLOYMENT_TARGET: "17.0"
+      TARGETED_DEVICE_FAMILY: "1,2"
+      ENABLE_HARDENED_RUNTIME: YES
+      SWIFT_STRICT_CONCURRENCY: complete
+    dependencies:
+      - package: ZIPFoundation
+    scheme:
+      testTargets:
+        - RPGPlayerTests
+
+  RPGPlayerTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - RPGPlayerTests
+    dependencies:
+      - target: RPGPlayer
+    settings:
+      PRODUCT_BUNDLE_IDENTIFIER: com.rpgplayer.tests
+      SWIFT_VERSION: "5.9"
