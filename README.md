@@ -81,12 +81,75 @@ Ví dụ: `RPGPlayer-4b1ff92abc-12` → commit `4b1ff92`, lần chạy thứ 12.
 | # | Milestone | Trạng thái |
 |---|-----------|-----------|
 | M0 | Khung app, Library UI, Import ZIP, GameDetector | ✅ Xong |
-| M1a | Engine MV/MZ (WKWebView + JS shim) | 🔲 Tiếp theo |
+| M1a | Engine MV/MZ (WKWebView + JS shim) | ✅ Xong |
 | M1b | Engine RGSS "Hello Sprite" (CRuby + Metal) | 🔲 |
 | M2 | Input (GameController + D-pad ảo) | 🔲 |
 | M3 | Save game + iCloud sync | 🔲 |
 | M4 | Plugin manager, chống crash, dọn cache | 🔲 |
 | M5 | Dịch + tối ưu 60fps | 🔲 |
+
+---
+
+## M1a — Engine MV/MZ: Chi tiết kỹ thuật
+
+### Cấu trúc file mới
+
+```
+RPGPlayer/
+├── App/
+│   ├── RPGPlayerApp.swift  (đã sửa: thêm @UIApplicationDelegateAdaptor)
+│   └── AppDelegate.swift   (mới: runtime orientation lock)
+├── Core/Engine/
+│   └── RPGGameSchemeHandler.swift  (mới: custom URL scheme handler)
+├── UI/Game/
+│   ├── GameDetailViewMV.swift      (mới: SwiftUI wrapper)
+│   └── GamePlayerViewController.swift  (mới: WKWebView + message handlers)
+├── UI/Library/
+│   └── GameCardView.swift  (đã sửa: NavigationLink cho MV/MZ)
+└── Resources/
+    ├── NWJSPolyfill.js  (mới: stub window.nw / process / require)
+    └── SaveBridge.js    (mới: save game bridge JS → Swift)
+```
+
+### Đo FPS
+
+`NWJSPolyfill.js` tự động cài FPS monitor: đo qua `requestAnimationFrame`, log ra console
+mm 5 giây một lần. Xem trong Xcode console dạng:
+```
+[GamePlayer][FPS] 59.8 fps (avg over 5s)
+[GamePlayer][WebGL] Renderer: Apple GPU
+```
+
+### NW.js API đã stub
+
+| API | Mức độ |
+|---|---|
+| `window.nw.App` (argv, dataPath, quit, clearCache) | ✅ Stub đủ |
+| `window.nw.Window.get()` | ✅ Fake object |
+| `window.nw.Screen` | ✅ Fake (1 screen) |
+| `window.nw.Shell` | ✅ No-op |
+| `window.nw.Clipboard` | ✅ Fake |
+| `require('nw.gui')` | ✅ Return `window.nw` |
+| `require('path')` | ✅ join/dirname/basename/extname |
+| `require('fs')` | ⚠️ Safe mock (readFileSync thước Error, write → no-op) |
+| `require('os')` | ✅ Stub |
+| `require('events')` | ✅ EventEmitter cơ bản |
+| `require('child_process')` | ⚠️ Stub (exec/spawn trả error) |
+| `process.platform/env/argv` | ✅ |
+| `setImmediate` | ✅ `setTimeout(fn, 0)` |
+| `localStorage` | ✅ Proxy → bridge Swift save |
+
+### Rủi ro plugin
+
+| Plugin | Tình trạng |
+|---|---|
+| VisuStella MZ (core, battles, etc.) | ✅ Thuần JS, không dùng NW.js |
+| Yanfly MV Core / Save Core | ⚠️ Save Core override `StorageManager` — bridge đã tương thích |
+| HUD Maker Ultra | ⚠️ Dùng `require('fs')` để đọc config — trả mock rỗng, UI có thể trống |
+| SRD_GameUpgrade | ⚠️ Dùng `nw.App.dataPath` — trả empty string, có thể fallback OK |
+| FOSSIL (SQLite native) | ❌ Không thể chạy — native Node module |
+| QMovement, Irina_X series | ✅ Thuần JS |
+| OcRam Plugins (MZ) | ✅ Thuần JS |
 
 ---
 

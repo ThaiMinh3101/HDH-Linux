@@ -2,10 +2,16 @@ import SwiftUI
 
 /// Thẻ game hiển thị trong lưới Library.
 /// Thiết kế: glassmorphism tối, thumbnail + badge engine + tên game.
+/// MV/MZ cards tap → GameDetailViewMV. RGSS cards are not yet playable.
 struct GameCardView: View {
 
     let entry: GameEntry
     var onDelete: (() -> Void)? = nil
+
+    /// True khi engine đã hỗ trợ play (MV / MZ)
+    private var isPlayable: Bool {
+        entry.engine == .mv || entry.engine == .mz
+    }
 
     // Thumbnail từ sandbox (nil nếu không có)
     private var thumbnailImage: Image? {
@@ -17,13 +23,40 @@ struct GameCardView: View {
     }
 
     var body: some View {
+        Group {
+            if isPlayable {
+                NavigationLink(destination: GameDetailViewMV(entry: entry)) {
+                    cardContent
+                }
+                .buttonStyle(.plain)
+            } else {
+                cardContent
+            }
+        }
+        .contextMenu {
+            Button(role: .destructive) {
+                onDelete?()
+            } label: {
+                Label("Xoá game", systemImage: "trash")
+            }
+        }
+    }
+
+    // MARK: - Card content
+
+    private var cardContent: some View {
         VStack(alignment: .leading, spacing: 0) {
 
             // MARK: Thumbnail / Placeholder
             ZStack(alignment: .topTrailing) {
                 thumbnailArea
-                engineBadge
-                    .padding(8)
+                VStack(alignment: .trailing, spacing: 4) {
+                    engineBadge
+                    if isPlayable {
+                        playBadge
+                    }
+                }
+                .padding(8)
             }
             .frame(height: 130)
             .clipped()
@@ -48,16 +81,12 @@ struct GameCardView: View {
         .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .strokeBorder(.white.opacity(0.08), lineWidth: 1)
+                .strokeBorder(
+                    isPlayable ? entry.engine.badgeColor.opacity(0.25) : .white.opacity(0.08),
+                    lineWidth: 1
+                )
         )
         .shadow(color: .black.opacity(0.35), radius: 8, x: 0, y: 4)
-        .contextMenu {
-            Button(role: .destructive) {
-                onDelete?()
-            } label: {
-                Label("Xoá game", systemImage: "trash")
-            }
-        }
         .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
 
@@ -116,6 +145,16 @@ struct GameCardView: View {
             .background(entry.engine.badgeColor)
             .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
             .shadow(color: entry.engine.badgeColor.opacity(0.6), radius: 4)
+    }
+
+    /// Small ▶ play indicator shown only on playable (MV/MZ) cards
+    private var playBadge: some View {
+        Image(systemName: "play.fill")
+            .font(.system(size: 9, weight: .bold))
+            .foregroundStyle(.white)
+            .padding(5)
+            .background(.black.opacity(0.55))
+            .clipShape(Circle())
     }
 
     private var cardBackground: some View {
