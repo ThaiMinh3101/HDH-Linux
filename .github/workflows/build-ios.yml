@@ -93,21 +93,67 @@ jobs:
           fi
           echo "✅ Archive thành công: build/RPGPlayer.xcarchive"
 
-      # ── 6. Đóng gói .ipa thủ công (không cần provisioning profile) ────────
+      # ── 6. Debug: xác nhận Info.plist đủ key trước khi đóng gói ──────────
+      - name: Debug — Verify Info.plist inside archive
+        run: |
+          ARCHIVE="build/RPGPlayer.xcarchive"
+          APPS_DIR="$ARCHIVE/Products/Applications"
+
+          echo "=== Cây thư mục archive (depth 4) ==="
+          find "$ARCHIVE" -maxdepth 4 -type d
+
+          # Tìm .app bundle (bất kể tên, phòng khi vẫn resolve khác)
+          APP_PATH=$(find "$APPS_DIR" -maxdepth 1 -name "*.app" -type d | head -1)
+          if [ -z "$APP_PATH" ]; then
+            echo "❌ Không tìm thấy .app bundle trong $APPS_DIR"
+            ls -la "$APPS_DIR" 2>/dev/null || echo "(thư mục không tồn tại)"
+            exit 1
+          fi
+          echo ""
+          echo "=== .app bundle tìm thấy: $APP_PATH ==="
+
+          PLIST="$APP_PATH/Info.plist"
+          if [ ! -f "$PLIST" ]; then
+            echo "❌ Info.plist không tồn tại trong $APP_PATH"
+            exit 1
+          fi
+
+          echo ""
+          echo "=== plutil -p Info.plist ==="
+          plutil -p "$PLIST"
+
+          # Kiểm tra 3 key bắt buộc
+          FAIL=0
+          for KEY in CFBundleExecutable CFBundleIdentifier CFBundleName; do
+            VAL=$(plutil -extract "$KEY" raw "$PLIST" 2>/dev/null || echo "")
+            if [ -z "$VAL" ]; then
+              echo "❌ THIẾU hoặc RỖNG: $KEY"
+              FAIL=1
+            else
+              echo "✅ $KEY = $VAL"
+            fi
+          done
+
+          if [ "$FAIL" -eq 1 ]; then
+            echo ""
+            echo "❌ Info.plist thiếu key bắt buộc — dừng build."
+            exit 1
+          fi
+          echo ""
+          echo "✅ Info.plist hợp lệ — tiến hành đóng gói."
+
+      # ── 7. Đóng gói .ipa thủ công (không cần provisioning profile) ────────
       # Cách này tạo IPA thô (unsigned). AltServer/Sideloadly sẽ ký lại khi sideload.
       - name: Package unsigned IPA
         run: |
           ARCHIVE="build/RPGPlayer.xcarchive"
-          APP_PATH="$ARCHIVE/Products/Applications/RPGPlayer.app"
+          APPS_DIR="$ARCHIVE/Products/Applications"
+          APP_PATH=$(find "$APPS_DIR" -maxdepth 1 -name "*.app" -type d | head -1)
           PAYLOAD_DIR="build/Payload"
           IPA_PATH="build/RPGPlayer-unsigned.ipa"
 
           if [ ! -d "$APP_PATH" ]; then
-            echo "❌ Không tìm thấy RPGPlayer.app trong archive!"
-            echo "Danh sách thư mục Products:"
-            ls -la "$ARCHIVE/Products/" 2>/dev/null || echo "(thư mục Products không tồn tại)"
-            echo "Cây thư mục archive:"
-            find "$ARCHIVE" -maxdepth 4 -type d
+            echo "❌ Không tìm thấy .app trong archive!"
             exit 1
           fi
 
