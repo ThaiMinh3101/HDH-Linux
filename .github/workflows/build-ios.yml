@@ -1,5 +1,8 @@
 # Build iOS .ipa — CHỈ chạy khi bấm nút thủ công trên GitHub Actions tab.
 # KHÔNG có trigger push/pull_request — sẽ không tự chạy khi commit.
+#
+# Runner: macos-15 (Sequoia) — iOS 18 SDK, Xcode 16.x mặc định.
+# Xcode Command Line Tools 16.4 trên macos-15 image (tính đến 7/2026).
 
 name: Build iOS IPA
 
@@ -14,21 +17,25 @@ on:
 jobs:
   build:
     name: Build RPGPlayer (unsigned IPA)
-    runs-on: macos-14
+    runs-on: macos-15
 
     steps:
       # ── 1. Checkout ──────────────────────────────────────────────────────────
       - name: Checkout source
         uses: actions/checkout@v4
 
-      # ── 2. Chọn Xcode version ─────────────────────────────────────────────
-      # macos-14 có sẵn Xcode 15.x và 16.x. Pin 15.4 cho ổn định với iOS 17 SDK.
-      - name: Select Xcode
-        run: sudo xcode-select -s /Applications/Xcode_15.4.app
-        continue-on-error: true   # nếu không có 15.4, dùng default
-
-      - name: Show Xcode version
-        run: xcodebuild -version
+      # ── 2. Kiểm tra Xcode có sẵn ─────────────────────────────────────────
+      # In ra danh sách Xcode cài trên runner để debug khi cần.
+      - name: List available Xcode versions
+        run: |
+          echo "=== /Applications/Xcode*.app ==="
+          ls /Applications | grep -i xcode || echo "(không tìm thấy Xcode.app nào)"
+          echo ""
+          echo "=== xcode-select --print-path ==="
+          xcode-select --print-path
+          echo ""
+          echo "=== xcodebuild -version ==="
+          xcodebuild -version
 
       # ── 3. Cài xcodegen & generate .xcodeproj ─────────────────────────────
       # Không commit .xcodeproj vào repo là best practice với xcodegen.
@@ -37,8 +44,18 @@ jobs:
         run: |
           curl -sL https://github.com/yonaskolb/XcodeGen/releases/download/2.46.0/xcodegen.zip \
             -o /tmp/xcodegen.zip
-          unzip -q /tmp/xcodegen.zip -d /tmp/xcodegen_bin
-          sudo cp /tmp/xcodegen_bin/xcodegen/bin/xcodegen /usr/local/bin/xcodegen
+          unzip -q /tmp/xcodegen.zip -d /tmp/xcodegen_extracted
+          # XcodeGen 2.x giải nén thành thư mục con "xcodegen/" bên trong zip
+          # Tìm binary bất kể cấu trúc thư mục bên trong
+          XCODEGEN_BIN=$(find /tmp/xcodegen_extracted -name "xcodegen" -type f | head -1)
+          if [ -z "$XCODEGEN_BIN" ]; then
+            echo "❌ Không tìm thấy xcodegen binary sau khi giải nén!"
+            ls -laR /tmp/xcodegen_extracted
+            exit 1
+          fi
+          echo "✅ Tìm thấy xcodegen tại: $XCODEGEN_BIN"
+          sudo cp "$XCODEGEN_BIN" /usr/local/bin/xcodegen
+          sudo chmod +x /usr/local/bin/xcodegen
           xcodegen --version
 
       - name: Generate Xcode project
@@ -66,25 +83,14 @@ jobs:
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
             DEVELOPMENT_TEAM="" \
-            archive \
-            | xcpretty || true
+            archive 2>&1 | tee build_log.txt
 
-          # Fallback: nếu xcpretty chưa cài thì chạy lại không pipe
+          # Kiểm tra archive đã tạo thành công chưa
           if [ ! -d "build/RPGPlayer.xcarchive" ]; then
-            echo "xcpretty fallback — re-running without pipe..."
-            xcodebuild \
-              -project RPGPlayer.xcodeproj \
-              -scheme RPGPlayer \
-              -configuration Release \
-              -sdk iphoneos \
-              -archivePath build/RPGPlayer.xcarchive \
-              -clonedSourcePackagesDirPath SourcePackages \
-              CODE_SIGNING_ALLOWED=NO \
-              CODE_SIGNING_REQUIRED=NO \
-              CODE_SIGN_IDENTITY="" \
-              DEVELOPMENT_TEAM="" \
-              archive
+            echo "❌ Archive không tạo được! Xem log bên trên."
+            exit 1
           fi
+          echo "✅ Archive thành công: build/RPGPlayer.xcarchive"
 
       # ── 6. Đóng gói .ipa thủ công (không cần provisioning profile) ────────
       # Cách này tạo IPA thô (unsigned). AltServer/Sideloadly sẽ ký lại khi sideload.
@@ -97,7 +103,10 @@ jobs:
 
           if [ ! -d "$APP_PATH" ]; then
             echo "❌ Không tìm thấy RPGPlayer.app trong archive!"
+            echo "Danh sách thư mục Products:"
             ls -la "$ARCHIVE/Products/" 2>/dev/null || echo "(thư mục Products không tồn tại)"
+            echo "Cây thư mục archive:"
+            find "$ARCHIVE" -maxdepth 4 -type d
             exit 1
           fi
 
@@ -111,7 +120,16 @@ jobs:
           echo "✅ IPA đã tạo: $IPA_PATH"
           ls -lh "$IPA_PATH"
 
-      # ── 7. Upload artifact với tên kèm commit hash ────────────────────────
+      # ── 7. Upload log nếu build thất bại ──────────────────────────────────
+      - name: Upload build log (khi thất bại)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log-${{ github.run_number }}
+          path: build_log.txt
+          retention-days: 7
+
+      # ── 8. Upload artifact với tên kèm commit hash (7 ký tự đầu) ────────
       - name: Upload IPA artifact
         uses: actions/upload-artifact@v4
         with:
@@ -120,21 +138,29 @@ jobs:
           retention-days: 30
           if-no-files-found: error
 
-      # ── 8. Summary ────────────────────────────────────────────────────────
+      # ── 9. Summary ────────────────────────────────────────────────────────
       - name: Build summary
         if: always()
         run: |
-          echo "## Build RPGPlayer" >> $GITHUB_STEP_SUMMARY
+          COMMIT_SHORT="${{ github.sha }}"
+          COMMIT_SHORT="${COMMIT_SHORT:0:7}"
+
+          echo "## 📦 Build RPGPlayer" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "| Key | Value |" >> $GITHUB_STEP_SUMMARY
           echo "|-----|-------|" >> $GITHUB_STEP_SUMMARY
-          echo "| Commit | \`${{ github.sha }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Runner | macos-15 |" >> $GITHUB_STEP_SUMMARY
+          echo "| Commit | \`${COMMIT_SHORT}\` (\`${{ github.sha }}\`) |" >> $GITHUB_STEP_SUMMARY
           echo "| Run # | ${{ github.run_number }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Notes | ${{ inputs.notes }} |" >> $GITHUB_STEP_SUMMARY
           if [ -f "build/RPGPlayer-unsigned.ipa" ]; then
             SIZE=$(du -sh build/RPGPlayer-unsigned.ipa | cut -f1)
             echo "| IPA size | $SIZE |" >> $GITHUB_STEP_SUMMARY
             echo "| Status | ✅ Thành công |" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "> **Artifact name:** \`RPGPlayer-${{ github.sha }}-${{ github.run_number }}\`" >> $GITHUB_STEP_SUMMARY
           else
             echo "| Status | ❌ IPA không tạo được |" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "> Xem artifact **build-log** để debug." >> $GITHUB_STEP_SUMMARY
           fi

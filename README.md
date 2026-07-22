@@ -38,6 +38,9 @@ open RPGPlayer.xcodeproj
 
 ## Cách build & cài thử (không cần Xcode trên máy)
 
+> **CI runner:** `macos-15` (Sequoia) · Xcode 16.x · iOS 18 SDK  
+> Deployment target vẫn là iOS 17 — app chạy được từ iOS 17 trở lên.
+
 ### Bước 1 — Trigger build trên GitHub Actions
 
 1. Vào repo trên GitHub → tab **Actions**
