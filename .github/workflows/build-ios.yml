@@ -58,6 +58,37 @@ jobs:
           sudo chmod +x /usr/local/bin/xcodegen
           xcodegen --version
 
+      # ── 3.5. Build mruby XCFramework ─────────────────────────────────────
+      # Must run BEFORE xcodegen so Frameworks/ exists when the project is
+      # generated (project.yml references Frameworks/mruby.xcframework).
+      # Estimated time: ~3–5 minutes on macos-15.
+      - name: Build mruby 3.3.0 (arm64 device + simulator)
+        run: |
+          chmod +x Scripts/build_mruby.sh
+          bash Scripts/build_mruby.sh
+
+      # Sanity-check: confirm XCFramework and headers exist before proceeding
+      - name: Verify mruby build outputs
+        run: |
+          echo "=== Frameworks/ ==="
+          ls -la Frameworks/
+
+          echo ""
+          echo "=== mruby.xcframework/ (depth 3) ==="
+          find Frameworks/mruby.xcframework -maxdepth 3 | head -30
+
+          echo ""
+          echo "=== mruby-headers/ (top level) ==="
+          ls Frameworks/mruby-headers/
+
+          # Fail fast if critical artifacts are missing
+          if [ ! -f "Frameworks/mruby-headers/mruby.h" ]; then
+            echo "❌ mruby.h not found in mruby-headers/ — aborting"
+            exit 1
+          fi
+          echo ""
+          echo "✅ mruby build outputs verified"
+
       - name: Generate Xcode project
         run: xcodegen generate --spec project.yml
 

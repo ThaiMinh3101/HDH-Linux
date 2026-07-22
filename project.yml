@@ -57,8 +57,26 @@ targets:
       ENABLE_HARDENED_RUNTIME: YES
       SWIFT_STRICT_CONCURRENCY: targeted
 
+      # ── mruby / C interop ───────────────────────────────────────────────
+      # Bridging header exposes mruby C API + RGSS bridge functions to Swift.
+      # Path is relative to $(SRCROOT).
+      SWIFT_OBJC_BRIDGING_HEADER: RPGPlayer/EngineRGSS/RPGPlayer-Bridging-Header.h
+
+      # HEADER_SEARCH_PATHS: mruby-headers/ is created by Scripts/build_mruby.sh
+      # in CI (and must exist before xcodegen runs).
+      HEADER_SEARCH_PATHS:
+        - $(inherited)
+        - $(SRCROOT)/Frameworks/mruby-headers
+
     dependencies:
       - package: ZIPFoundation
+      # mruby static XCFramework — built by Scripts/build_mruby.sh in CI.
+      # embed: false because it is a static library (no dylib to embed).
+      - framework: Frameworks/mruby.xcframework
+        embed: false
+      # Metal + MetalKit for sprite rendering (SpriteRenderer.swift)
+      - sdk: Metal.framework
+      - sdk: MetalKit.framework
     scheme:
       testTargets:
         - RPGPlayerTests

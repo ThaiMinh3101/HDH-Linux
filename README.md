@@ -79,14 +79,89 @@ Ví dụ: `RPGPlayer-4b1ff92abc-12` → commit `4b1ff92`, lần chạy thứ 12.
 ## Roadmap Milestone
 
 | # | Milestone | Trạng thái |
-|---|-----------|-----------|
+|---|-----------|-----------| 
 | M0 | Khung app, Library UI, Import ZIP, GameDetector | ✅ Xong |
 | M1a | Engine MV/MZ (WKWebView + JS shim) | ✅ Xong |
-| M1b | Engine RGSS "Hello Sprite" (CRuby + Metal) | 🔲 |
+| M1b | Engine RGSS "Hello Sprite" (mruby + Metal) | 🔧 In progress |
 | M2 | Input (GameController + D-pad ảo) | 🔲 |
 | M3 | Save game + iCloud sync | 🔲 |
 | M4 | Plugin manager, chống crash, dọn cache | 🔲 |
 | M5 | Dịch + tối ưu 60fps | 🔲 |
+
+---
+
+## M1b — Engine RGSS "Hello Sprite": Chi tiết kỹ thuật
+
+### Mục tiêu
+
+Chứng minh pipeline **Ruby script → Ruby C binding → Metal render** hoạt động
+trước khi làm bất kỳ tính năng RGSS nào khác.
+
+### Cấu trúc file mới
+
+```
+RPGPlayer/EngineRGSS/
+├── mruby_bridge.h           C API: SpriteSetBitmapCallback, mrb_define_sprite_class
+├── mruby_bridge.c           C impl: Sprite.new, Sprite#bitmap= (clean-room)
+├── RPGPlayer-Bridging-Header.h  Swift ↔ C bridging header
+├── RubyBridge.swift         Swift wrapper quản lý mruby VM lifecycle
+├── Shaders.metal            Vertex/fragment shader cho full-screen sprite quad
+├── SpriteRenderer.swift     MTKView renderer, load PNG texture / fallback
+├── RGSSViewController.swift UIViewController: host MTKView + chạy Ruby script
+└── RGSSEngineView.swift     SwiftUI wrapper (UIViewControllerRepresentable)
+
+Scripts/
+├── build_config_ios.rb      mruby cross-compile config (arm64 device + sim)
+└── build_mruby.sh           CI script: download→build→XCFramework mruby 3.3.0
+```
+
+### Luồng data
+
+```
+RGSSViewController.viewDidLoad()
+  └─ setupMetal()  →  SpriteRenderer (MTKView delegate, 60fps loop)
+  └─ startRubyEngine()  →  RubyBridge.start(script:, renderer:)
+       └─ mrb_open()
+       └─ mrb_define_sprite_class(mrb, callback)   [C]
+       └─ mrb_bridge_run_script(mrb, "sprite = Sprite.new\nsprite.bitmap = 'test.png'")
+            └─ Sprite#bitmap= fires C callback
+                 └─ DispatchQueue.main: SpriteRenderer.loadTexture("test.png")
+                      └─ MTKTextureLoader (bundle PNG) | fallback checkerboard
+                           └─ MTKView.draw() → renders texture at 60fps
+```
+
+### mruby vs CRuby — lý do chọn mruby
+
+| | mruby (MIT) | CRuby/MRI |
+|---|---|---|
+| Cross-compile iOS | ✅ Documented, stable | ❌ Rất phức tạp, không official |
+| License | ✅ MIT | ✅ Ruby/BSD |
+| Marshal.load | ❌ Không có | ✅ Có sẵn |
+| RGSS script cơ bản | ✅ Đủ | ✅ Đủ |
+
+> **Nợ kỹ thuật ghi nhận:** `Marshal` và `Encoding` không có trong mruby.
+> RGSS save data (`.rxdata`, `.rvdata`, `.rvdata2`) dùng `Marshal.load` — sẽ
+> implement custom Marshal reader ở **Milestone 3 (Save & iCloud)**.
+
+### Gems được include (mruby-io bị loại)
+
+mruby-io bị exclude vì nó dùng `fork()`/`pipe()` — không có trên iOS sandbox.
+Tất cả gems khác trong `default` gembox đều được include, bao gồm `mruby-fiber`
+(quan trọng cho scene loop của RGSS) và `mruby-eval` (RGSS scripts dùng `eval`).
+
+### Fallback texture
+
+Nếu `test.png` không có trong bundle, `SpriteRenderer` tự tạo một checkerboard
+64×64 orange/teal — vẫn chứng minh Metal pipeline hoạt động.
+
+### CI pipeline (thêm vào M1a)
+
+Bước mới trong `build-ios.yml` (chạy trước `xcodegen generate`):
+1. `Scripts/build_mruby.sh` — download mruby 3.3.0, cross-compile → `Frameworks/mruby.xcframework`
+2. Verify: kiểm tra `Frameworks/mruby-headers/mruby.h` tồn tại
+3. Ước tính thêm ~3–5 phút vào tổng thời gian build
+
+> `Frameworks/` được gitignore — rebuild từ source mỗi lần CI.
 
 ---
 
