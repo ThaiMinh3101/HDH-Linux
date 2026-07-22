@@ -76,6 +76,7 @@ jobs:
             -project RPGPlayer.xcodeproj \
             -scheme RPGPlayer \
             -configuration Release \
+            -destination 'generic/platform=iOS' \
             -sdk iphoneos \
             -archivePath build/RPGPlayer.xcarchive \
             -clonedSourcePackagesDirPath SourcePackages \

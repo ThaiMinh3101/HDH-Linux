@@ -48,12 +48,15 @@ targets:
         UIFileSharingEnabled: false
         LSSupportsOpeningDocumentsInPlace: false
     settings:
+      PRODUCT_NAME: RPGPlayer
       PRODUCT_BUNDLE_IDENTIFIER: com.rpgplayer.app
       SWIFT_VERSION: "5.9"
       IPHONEOS_DEPLOYMENT_TARGET: "17.0"
       TARGETED_DEVICE_FAMILY: "1,2"
       ENABLE_HARDENED_RUNTIME: YES
       SWIFT_STRICT_CONCURRENCY: targeted
+      SUPPORTS_MACCATALYST: NO
+      SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD: NO
     dependencies:
       - package: ZIPFoundation
     scheme:
