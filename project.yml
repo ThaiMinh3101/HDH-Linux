@@ -77,6 +77,8 @@ targets:
       # Metal + MetalKit for sprite rendering (SpriteRenderer.swift)
       - sdk: Metal.framework
       - sdk: MetalKit.framework
+      # GameController for physical gamepad support (M2: GamepadManager.swift)
+      - sdk: GameController.framework
     scheme:
       testTargets:
         - RPGPlayerTests

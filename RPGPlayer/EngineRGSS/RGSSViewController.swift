@@ -2,9 +2,13 @@
 //
 // UIViewController that hosts the RGSS Metal renderer and mruby VM.
 // M1b: runs the "Hello Sprite" test script to prove the full pipeline.
+// M2:  adds CADisplayLink frame loop for per-frame input update,
+//      and VirtualDpadView overlay (hidden when physical gamepad is connected).
 
 import UIKit
 import MetalKit
+import Combine
+import SwiftUI
 
 final class RGSSViewController: UIViewController {
 
@@ -19,6 +23,16 @@ final class RGSSViewController: UIViewController {
     private var renderer: SpriteRenderer!
     private var rubyBridge: RubyBridge!
 
+    /// CADisplayLink drives the per-frame input pump.
+    /// Full RGSS scene loop (Graphics.update, scene switching) is a future milestone.
+    private var displayLink: CADisplayLink?
+
+    /// Hosting controller for the SwiftUI VirtualDpadView overlay.
+    private var dpadHostingController: UIHostingController<VirtualDpadView>?
+
+    /// Observation token for gamepad connection changes.
+    private var gamepadCancellable: AnyCancellable?
+
     // MARK: - View lifecycle
 
     override func viewDidLoad() {
@@ -31,7 +45,23 @@ final class RGSSViewController: UIViewController {
         }
 
         guard setupMetal(device: device) else { return }
+        setupDpadOverlay()
+        startDisplayLink()
         startRubyEngine()
+    }
+
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+        displayLink?.isPaused = false
+    }
+
+    override func viewWillDisappear(_ animated: Bool) {
+        super.viewWillDisappear(animated)
+        displayLink?.isPaused = true
+    }
+
+    deinit {
+        displayLink?.invalidate()
     }
 
     override var prefersStatusBarHidden: Bool { true }
@@ -63,6 +93,68 @@ final class RGSSViewController: UIViewController {
         return true
     }
 
+    // MARK: - Virtual D-pad overlay (M2)
+
+    private func setupDpadOverlay() {
+        let dpadView = VirtualDpadView()
+        let hostVC   = UIHostingController(rootView: dpadView)
+        hostVC.view.backgroundColor = .clear
+        hostVC.view.isUserInteractionEnabled = true
+
+        addChild(hostVC)
+        hostVC.view.frame = view.bounds
+        hostVC.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        view.addSubview(hostVC.view)   // On top of MTKView
+        hostVC.didMove(toParent: self)
+        dpadHostingController = hostVC
+
+        // Observe gamepad connection to show/hide overlay.
+        // VirtualDpadView itself reads isGamepadConnected, but we also log here.
+        gamepadCancellable = GamepadManager.shared.$isGamepadConnected
+            .receive(on: DispatchQueue.main)
+            .sink { connected in
+                print("[RGSSViewController] Gamepad connected: \(connected) → D-pad overlay \(connected ? "hidden" : "visible")")
+            }
+    }
+
+    // MARK: - CADisplayLink (M2: input pump)
+
+    private func startDisplayLink() {
+        let link = CADisplayLink(target: self, selector: #selector(frameTick))
+        link.preferredFrameRateRange = CAFrameRateRange(minimum: 30, maximum: 60, preferred: 60)
+        link.add(to: .main, forMode: .common)
+        displayLink = link
+    }
+
+    /// Called once per display refresh (~60 fps).
+    /// Feeds the current merged InputState into the C-level RGSS Input module.
+    @objc private func frameTick(_ link: CADisplayLink) {
+        // Snapshot the current merged input on the main thread.
+        let state = GamepadManager.shared.mergedInput
+
+        // Convert Swift InputState → C RGSSInputState and pump into the module.
+        var cState = RGSSInputState(
+            dpad_up:    state.dpadUp,
+            dpad_down:  state.dpadDown,
+            dpad_left:  state.dpadLeft,
+            dpad_right: state.dpadRight,
+            button_a:   state.buttonA,
+            button_b:   state.buttonB,
+            button_c:   state.buttonC,
+            button_d:   state.buttonD,
+            l1:         state.l1,
+            r1:         state.r1,
+            l2:         state.l2,
+            r2:         state.r2,
+            start:      state.start,
+            select:     state.select
+        )
+        rgss_input_update(&cState)
+
+        // TODO (future milestone): advance the mruby scene loop one frame here
+        // (Graphics.update, scene switching, etc.).
+    }
+
     // MARK: - Ruby engine
 
     private func startRubyEngine() {
@@ -79,6 +171,11 @@ final class RGSSViewController: UIViewController {
         # M1b — Hello Sprite: proves Ruby → C bridge → Metal pipeline
         sprite = Sprite.new
         sprite.bitmap = "test.png"
+
+        # M2 — Input sanity check (runs once at load time, not per-frame)
+        # In a real game these would be called inside a loop driven by Graphics.update.
+        puts "Input::DOWN = #{Input::DOWN}"
+        puts "Input::C    = #{Input::C}"
         """
 
         let capturedBridge   = rubyBridge!

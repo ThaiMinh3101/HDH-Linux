@@ -1,5 +1,7 @@
 import UIKit
 import WebKit
+import SwiftUI
+import Combine
 
 // MARK: - GamePlayerViewController
 // UIViewController that hosts a full-screen WKWebView for playing
@@ -14,6 +16,15 @@ final class GamePlayerViewController: UIViewController {
     private var webView: WKWebView!
     private let schemeHandler: RPGGameSchemeHandler
     private let savesURL: URL
+
+    // M2: Input bridge
+    /// CADisplayLink that pushes InputState → GamepadBridge.js every frame.
+    private var displayLink: CADisplayLink?
+    /// Previous merged input — only send JS update when state changes.
+    private var previousMergedInput = InputState.neutral
+    /// Hosting controller for the SwiftUI VirtualDpadView overlay.
+    private var dpadHostingController: UIHostingController<VirtualDpadView>?
+    private var gamepadCancellable: AnyCancellable?
 
     // MARK: - Init
 
@@ -38,6 +49,8 @@ final class GamePlayerViewController: UIViewController {
         view.backgroundColor = .black
         buildWebView()
         loadGame()
+        setupDpadOverlay()    // M2: virtual D-pad on top of WKWebView
+        startDisplayLink()    // M2: 60fps input push to GamepadBridge.js
     }
 
     override func viewWillAppear(_ animated: Bool) {
@@ -45,12 +58,18 @@ final class GamePlayerViewController: UIViewController {
         // Hide navigation bar for full-screen immersion
         navigationController?.setNavigationBarHidden(true, animated: animated)
         lockLandscape()
+        displayLink?.isPaused = false
     }
 
     override func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
         navigationController?.setNavigationBarHidden(false, animated: animated)
         unlockOrientation()
+        displayLink?.isPaused = true
+    }
+
+    deinit {
+        displayLink?.invalidate()
     }
 
     override var prefersStatusBarHidden: Bool { true }
@@ -81,9 +100,10 @@ final class GamePlayerViewController: UIViewController {
         ucc.add(WeakMessageHandler(delegate: self), name: "rpgConsole")
         config.userContentController = ucc
 
-        // ── Inject polyfill + save bridge BEFORE any game script runs ──────
-        injectUserScript(named: "NWJSPolyfill",  into: ucc, at: .atDocumentStart)
-        injectUserScript(named: "SaveBridge",    into: ucc, at: .atDocumentStart)
+        // ── Inject polyfill + save bridge + gamepad bridge BEFORE any game script runs
+        injectUserScript(named: "NWJSPolyfill",   into: ucc, at: .atDocumentStart)
+        injectUserScript(named: "SaveBridge",     into: ucc, at: .atDocumentStart)
+        injectUserScript(named: "GamepadBridge",  into: ucc, at: .atDocumentStart)
 
         // ── Create WebView ─────────────────────────────────────────────────
         webView = WKWebView(frame: view.bounds, configuration: config)
@@ -130,6 +150,68 @@ final class GamePlayerViewController: UIViewController {
         }
         print("[GamePlayer] Loading: \(url)")
         webView.load(URLRequest(url: url))
+    }
+
+    // MARK: - M2: Virtual D-pad overlay
+
+    private func setupDpadOverlay() {
+        let dpadView = VirtualDpadView()
+        let hostVC   = UIHostingController(rootView: dpadView)
+        hostVC.view.backgroundColor = .clear
+        hostVC.view.isUserInteractionEnabled = true
+
+        addChild(hostVC)
+        hostVC.view.frame = view.bounds
+        hostVC.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        view.addSubview(hostVC.view)
+        hostVC.didMove(toParent: self)
+        dpadHostingController = hostVC
+
+        gamepadCancellable = GamepadManager.shared.$isGamepadConnected
+            .receive(on: DispatchQueue.main)
+            .sink { connected in
+                print("[GamePlayer] Gamepad \(connected ? "connected" : "disconnected") — D-pad overlay \(connected ? "hidden" : "visible")")
+            }
+    }
+
+    // MARK: - M2: CADisplayLink — push InputState → GamepadBridge.js
+
+    private func startDisplayLink() {
+        let link = CADisplayLink(target: self, selector: #selector(frameTick))
+        link.preferredFrameRateRange = CAFrameRateRange(minimum: 30, maximum: 60, preferred: 60)
+        link.add(to: .main, forMode: .common)
+        displayLink = link
+    }
+
+    /// Fires every display refresh (~60 fps).
+    /// Converts the current merged InputState to JSON and pushes it to the
+    /// GamepadBridge.js shim via evaluateJavaScript.
+    /// Skips the JS call when state has not changed since last frame.
+    @objc private func frameTick(_ link: CADisplayLink) {
+        let current = GamepadManager.shared.mergedInput
+        guard current != previousMergedInput else { return }
+        previousMergedInput = current
+
+        // Build a compact JSON object matching the fields GamepadBridge.js expects.
+        let json = stateToJSON(current)
+        let js = "(function(){ var s=\(json); window.__rpgUpdateGamepad(s); window.__rpgUpdateGamepadKeys(s); })();"
+        webView?.evaluateJavaScript(js) { _, error in
+            if let error { print("[GamePlayer] GamepadBridge JS error: \(error)") }
+        }
+    }
+
+    /// Serialise an InputState as a compact JSON literal (no Foundation JSONEncoder needed).
+    private func stateToJSON(_ s: InputState) -> String {
+        func b(_ v: Bool) -> String { v ? "true" : "false" }
+        func f(_ v: Float) -> String { String(format: "%.3f", v) }
+        return """
+        {"dpadUp":\(b(s.dpadUp)),"dpadDown":\(b(s.dpadDown)),\
+"dpadLeft":\(b(s.dpadLeft)),"dpadRight":\(b(s.dpadRight)),\
+"buttonA":\(b(s.buttonA)),"buttonB":\(b(s.buttonB)),\
+"buttonC":\(b(s.buttonC)),"buttonD":\(b(s.buttonD)),\
+"l1":\(b(s.l1)),"r1":\(b(s.r1)),"l2":\(f(s.l2)),"r2":\(f(s.r2)),\
+"start":\(b(s.start)),"select":\(b(s.select))}
+        """.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     // MARK: - Orientation Lock

@@ -79,6 +79,10 @@ final class RubyBridge {
         mrb_define_sprite_class(mrbPtr, bitmapCallback)
         print("[RubyBridge] ✅ RGSS classes registered: Sprite")
 
+        // Register Input module (M2: trigger?/press?/repeat?, dir4/dir8)
+        mrb_define_input_module(mrbPtr)
+        print("[RubyBridge] ✅ RGSS modules registered: Input")
+
         // ---------------------------------------------------------------------------
         // Execute script
         // ---------------------------------------------------------------------------
