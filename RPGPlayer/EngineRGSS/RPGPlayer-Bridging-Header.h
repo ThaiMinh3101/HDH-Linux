@@ -16,5 +16,9 @@
 // RGSS Input module (M2: trigger?/press?/repeat? + gamepad mapping)
 #include "rgss_input_bridge.h"
 
+// RGSS Marshal (M3: Ruby Marshal 4.8 clean-room reader/writer)
+#include "rgss_marshal.h"
+#include "mruby_marshal_binding.h"
+
 #endif /* RPGPlayer_Bridging_Header_h */
 

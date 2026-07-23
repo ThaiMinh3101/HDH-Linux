@@ -6,6 +6,7 @@ struct LibraryView: View {
     @State private var store = LibraryStore.shared
     @State private var showFilePicker = false
     @State private var showProgress = false
+    @State private var showSettings  = false
     @State private var gameToDelete: GameEntry? = nil
     @State private var showDeleteConfirm = false
 
@@ -26,6 +27,9 @@ struct LibraryView: View {
                     .navigationBarTitleDisplayMode(.large)
                     .toolbar { toolbarContent }
                     .preferredColorScheme(.dark)
+                    .sheet(isPresented: $showSettings) {
+                        SettingsView()
+                    }
             }
 
             // Import progress overlay
@@ -39,6 +43,10 @@ struct LibraryView: View {
             allowsMultipleSelection: false
         ) { result in
             handleFilePickerResult(result)
+        }
+        .task {
+            // Kick off a background iCloud sync on app launch if enabled
+            await CloudSaveManager.shared.startSync()
         }
         .confirmationDialog(
             "Xoá game?",
@@ -188,6 +196,16 @@ struct LibraryView: View {
 
     @ToolbarContentBuilder
     private var toolbarContent: some ToolbarContent {
+        ToolbarItem(placement: .topBarLeading) {
+            Button {
+                showSettings = true
+            } label: {
+                Image(systemName: "gearshape.fill")
+                    .font(.body)
+                    .foregroundStyle(.secondary)
+            }
+            .accessibilityLabel("Cài đặt")
+        }
         ToolbarItem(placement: .topBarTrailing) {
             Button {
                 showFilePicker = true

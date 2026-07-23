@@ -83,6 +83,10 @@ final class RubyBridge {
         mrb_define_input_module(mrbPtr)
         print("[RubyBridge] ✅ RGSS modules registered: Input")
 
+        // Register Marshal module (M3: save/load via Marshal.load / Marshal.dump)
+        mrb_define_marshal_module(mrbPtr)
+        print("[RubyBridge] ✅ RGSS modules registered: Marshal")
+
         // ---------------------------------------------------------------------------
         // Execute script
         // ---------------------------------------------------------------------------

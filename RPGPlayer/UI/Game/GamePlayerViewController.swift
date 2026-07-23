@@ -363,10 +363,15 @@ extension GamePlayerViewController: WKScriptMessageHandler {
             return
         }
         let fileURL = savesURL.appendingPathComponent(sanitiseKey(key) + ".json")
+        let gameID  = entry.id
         DispatchQueue.global(qos: .utility).async {
             do {
                 try value.write(to: fileURL, atomically: true, encoding: .utf8)
                 print("[GamePlayer] 💾 Saved: \(key)")
+                // M3: Trigger iCloud sync after save (no-op if iCloud unavailable)
+                Task { @MainActor in
+                    await CloudSaveManager.shared.syncGameSaves(for: gameID)
+                }
             } catch {
                 print("[GamePlayer] ❌ Save failed for \(key): \(error)")
             }
