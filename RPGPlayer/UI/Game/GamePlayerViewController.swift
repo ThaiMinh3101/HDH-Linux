@@ -14,8 +14,11 @@ final class GamePlayerViewController: UIViewController {
     let entry: GameEntry
 
     private var webView: WKWebView!
-    private let schemeHandler: RPGGameSchemeHandler
     private let savesURL: URL
+
+    // M4: Record when the VC first appears so we can compute end-to-end launch time
+    // when LaunchTimingBridge.js reports firstPaint from JS performance.now().
+    private var launchWallTime: Date = Date()
 
     // M2: Input bridge
     /// CADisplayLink that pushes InputState → GamepadBridge.js every frame.
@@ -29,12 +32,7 @@ final class GamePlayerViewController: UIViewController {
     // MARK: - Init
 
     init(entry: GameEntry) {
-        self.entry = entry
-        let sandboxURL = StorageManager.shared.sandboxURL(for: entry.id)
-        self.schemeHandler = RPGGameSchemeHandler(
-            gameID: entry.id,
-            sandboxRoot: sandboxURL
-        )
+        self.entry    = entry
         self.savesURL = StorageManager.shared.savesURL(for: entry.id)
         super.init(nibName: nil, bundle: nil)
     }
@@ -47,6 +45,7 @@ final class GamePlayerViewController: UIViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = .black
+        launchWallTime = Date()
         buildWebView()
         loadGame()
         setupDpadOverlay()    // M2: virtual D-pad on top of WKWebView
@@ -77,35 +76,40 @@ final class GamePlayerViewController: UIViewController {
 
     // MARK: - WebView Setup
 
-    private func buildWebView() {
-        // ── Configuration ──────────────────────────────────────────────────
+    /// M4: Static factory so WebViewPool can pre-allocate a WKWebView
+    /// with the exact same configuration before the user taps play.
+    /// Called by both buildWebView() and WebViewPool.warmUp(for:).
+    static func makeWebViewConfig(
+        gameID: UUID,
+        sandboxRoot: URL
+    ) -> WKWebViewConfiguration {
         let config = WKWebViewConfiguration()
 
         // Register custom URL scheme BEFORE creating the webView
-        config.setURLSchemeHandler(schemeHandler, forURLScheme: "rpggame")
+        config.setURLSchemeHandler(
+            RPGGameSchemeHandler(gameID: gameID, sandboxRoot: sandboxRoot),
+            forURLScheme: "rpggame"
+        )
 
-        // Allow JavaScript (required for game engine)
         config.defaultWebpagePreferences.allowsContentJavaScript = true
-
-        // Allow inline media playback (required for RPG Maker audio)
         config.allowsInlineMediaPlayback = true
         config.mediaTypesRequiringUserActionForPlayback = []
 
-        // User content controller for JS ↔ Swift message passing
+        return config
+    }
+
+    private func buildWebView() {
+        // M4: WebViewPool provides pre-computed sandbox URL (avoiding FileManager lookup).
+        // WKWebView instances cannot be reused due to iOS 14+ WKUserContentController
+        // mutation restriction — always build a fresh WKWebView.
+        let wasWarmed  = WebViewPool.shared.wasWarmed(for: entry.id)
+        let sandboxURL = WebViewPool.shared.sandboxURL(for: entry.id)  // consumes the warm entry
+        let config     = Self.makeWebViewConfig(gameID: entry.id, sandboxRoot: sandboxURL)
+
         let ucc = WKUserContentController()
-        ucc.add(WeakMessageHandler(delegate: self), name: "rpgSave")
-        ucc.add(WeakMessageHandler(delegate: self), name: "rpgLoad")
-        ucc.add(WeakMessageHandler(delegate: self), name: "rpgSaveRemove")
-        ucc.add(WeakMessageHandler(delegate: self), name: "rpgQuit")
-        ucc.add(WeakMessageHandler(delegate: self), name: "rpgConsole")
+        attachMessageHandlers(to: ucc)
         config.userContentController = ucc
 
-        // ── Inject polyfill + save bridge + gamepad bridge BEFORE any game script runs
-        injectUserScript(named: "NWJSPolyfill",   into: ucc, at: .atDocumentStart)
-        injectUserScript(named: "SaveBridge",     into: ucc, at: .atDocumentStart)
-        injectUserScript(named: "GamepadBridge",  into: ucc, at: .atDocumentStart)
-
-        // ── Create WebView ─────────────────────────────────────────────────
         webView = WKWebView(frame: view.bounds, configuration: config)
         webView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
         webView.scrollView.isScrollEnabled = false
@@ -114,6 +118,24 @@ final class GamePlayerViewController: UIViewController {
         webView.backgroundColor = .black
         webView.navigationDelegate = self
         view.addSubview(webView)
+        print("[GamePlayer] 🆕 WKWebView created (\(wasWarmed ? "sandbox warm" : "sandbox cold"))")
+    }
+
+    /// Register WKScriptMessageHandlers and inject all user scripts.
+    private func attachMessageHandlers(to ucc: WKUserContentController) {
+        ucc.add(WeakMessageHandler(delegate: self), name: "rpgSave")
+        ucc.add(WeakMessageHandler(delegate: self), name: "rpgLoad")
+        ucc.add(WeakMessageHandler(delegate: self), name: "rpgSaveRemove")
+        ucc.add(WeakMessageHandler(delegate: self), name: "rpgQuit")
+        ucc.add(WeakMessageHandler(delegate: self), name: "rpgConsole")
+
+        // Inject scripts in order — all at document start so they're ready
+        // before any game script executes.
+        injectUserScript(named: "ImageErrorGuard",    into: ucc, at: .atDocumentStart)  // M4
+        injectUserScript(named: "LaunchTimingBridge", into: ucc, at: .atDocumentStart)  // M4
+        injectUserScript(named: "NWJSPolyfill",       into: ucc, at: .atDocumentStart)
+        injectUserScript(named: "SaveBridge",         into: ucc, at: .atDocumentStart)
+        injectUserScript(named: "GamepadBridge",      into: ucc, at: .atDocumentStart)
     }
 
     private func injectUserScript(
@@ -335,14 +357,29 @@ extension GamePlayerViewController: WKScriptMessageHandler {
                 case "fps":
                     let fps = dict["value"] as? Double ?? 0
                     print("[GamePlayer][FPS] \(fps) fps")
+
                 case "webgl":
                     let renderer = dict["renderer"] as? String ?? "unknown"
                     print("[GamePlayer][WebGL] Renderer: \(renderer)")
+
+                case "imageError":
+                    // M4: Crash guard — log broken asset, do NOT propagate further.
+                    let src = dict["src"] as? String ?? "(unknown)"
+                    print("[GamePlayer][ImageError] ⚠️  Failed to load: \(src)")
+
+                case "launchTiming":
+                    // M4: Fast Launch — report timing checkpoint.
+                    let checkpoint = dict["checkpoint"] as? String ?? "?"
+                    let ms         = dict["ms"]         as? Int    ?? -1
+                    let wallMs     = Int(Date().timeIntervalSince(launchWallTime) * 1000)
+                    print("[LaunchTiming] JS '\(checkpoint)': \(ms)ms (wall: ~\(wallMs)ms from viewDidLoad)")
+
                 case "error":
                     let msg  = dict["message"]  as? String ?? ""
                     let file = dict["filename"] as? String ?? ""
                     let line = dict["lineno"]   as? Int    ?? 0
                     print("[GamePlayer][JS ERROR] \(msg) @ \(file):\(line)")
+
                 default:
                     print("[GamePlayer][JS] \(dict)")
                 }

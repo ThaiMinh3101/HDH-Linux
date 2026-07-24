@@ -86,39 +86,65 @@ final class SpriteRenderer: NSObject, MTKViewDelegate {
 
     // MARK: - Texture loading
 
+    /// Shared MTKTextureLoader options.
+    private var textureLoadOptions: [MTKTextureLoader.Option: Any] {
+        [.textureUsage: MTLTextureUsage.shaderRead.rawValue,
+         .SRGB: false]
+    }
+
     /// Load a texture by bundle resource name (e.g. `"test.png"`).
-    /// Falls back to a procedural checkerboard if the file is not found in the bundle,
-    /// which still proves the Metal draw pipeline is working.
+    /// M4: All error paths are fully caught — uses checkerboard placeholder instead of crashing.
     func loadTexture(named name: String) {
         let ext  = (name as NSString).pathExtension
         let base = (name as NSString).deletingPathExtension
 
-        let options: [MTKTextureLoader.Option: Any] = [
-            .textureUsage: MTLTextureUsage.shaderRead.rawValue,
-            .SRGB: false
-        ]
+        guard let url = Bundle.main.url(
+            forResource: base,
+            withExtension: ext.isEmpty ? nil : ext
+        ) else {
+            print("[SpriteRenderer] ℹ️  '\(name)' not found in bundle — using placeholder")
+            currentTexture = makePlaceholderTexture(reason: "not-found: \(name)")
+            return
+        }
 
-        if let url = Bundle.main.url(
-            forResource:    base,
-            withExtension:  ext.isEmpty ? nil : ext
-        ) {
-            do {
-                currentTexture = try textureLoader.newTexture(URL: url, options: options)
-                print("[SpriteRenderer] ✅ Texture loaded from bundle: \(name)")
-            } catch {
-                print("[SpriteRenderer] ⚠️  Bundle load failed (\(error)) — using fallback")
-                currentTexture = makeFallbackTexture()
-            }
-        } else {
-            print("[SpriteRenderer] ℹ️  '\(name)' not found in bundle — rendering fallback checkerboard")
-            currentTexture = makeFallbackTexture()
+        do {
+            currentTexture = try textureLoader.newTexture(URL: url, options: textureLoadOptions)
+            print("[SpriteRenderer] ✅ Texture loaded from bundle: \(name)")
+        } catch {
+            // M4: Crash guard — never crash on a bad image file.
+            print("[SpriteRenderer] ⚠️  Decode failed for '\(name)': \(error.localizedDescription) — using placeholder")
+            currentTexture = makePlaceholderTexture(reason: "decode-error: \(name)")
         }
     }
 
-    /// Procedural 64×64 pixel checkerboard texture.
-    /// Colour scheme: warm orange / dark teal — visually distinct from background.
-    /// Proves the Metal pipeline works even with no PNG in the bundle.
-    private func makeFallbackTexture() -> MTLTexture? {
+    /// Load a texture from an absolute file-system URL (e.g. game sandbox asset path).
+    /// M4: Crash guard identical to loadTexture(named:) — placeholder on any failure.
+    func loadTextureFromURL(at fileURL: URL) {
+        let fileName = fileURL.lastPathComponent
+
+        guard FileManager.default.fileExists(atPath: fileURL.path) else {
+            print("[SpriteRenderer] ℹ️  File not found: \(fileURL.path) — using placeholder")
+            currentTexture = makePlaceholderTexture(reason: "not-found: \(fileName)")
+            return
+        }
+
+        do {
+            currentTexture = try textureLoader.newTexture(URL: fileURL, options: textureLoadOptions)
+            print("[SpriteRenderer] ✅ Texture loaded from sandbox: \(fileName)")
+        } catch {
+            // M4: Log the exact file name so it's easy to identify broken assets.
+            print("[SpriteRenderer] ⚠️  Decode failed for '\(fileName)': \(error.localizedDescription) — using placeholder")
+            currentTexture = makePlaceholderTexture(reason: "decode-error: \(fileName)")
+        }
+    }
+
+    /// Procedural 64×64 checkerboard placeholder texture.
+    /// M4: Used whenever an image fails to load — warm orange / dark teal palette.
+    /// The `reason` parameter is logged so broken assets are easy to identify.
+    private func makePlaceholderTexture(reason: String = "") -> MTLTexture? {
+        if !reason.isEmpty {
+            print("[SpriteRenderer] 🖼  Placeholder reason: \(reason)")
+        }
         let size = 64
         let desc = MTLTextureDescriptor.texture2DDescriptor(
             pixelFormat: .rgba8Unorm,
@@ -149,7 +175,7 @@ final class SpriteRenderer: NSObject, MTKViewDelegate {
             withBytes:  pixels,
             bytesPerRow: size * 4
         )
-        print("[SpriteRenderer] ✅ Fallback checkerboard texture ready (\(size)×\(size))")
+        print("[SpriteRenderer] ✅ Placeholder checkerboard texture ready (\(size)×\(size))")
         return tex
     }
 

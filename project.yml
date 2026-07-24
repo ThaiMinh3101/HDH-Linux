@@ -79,6 +79,8 @@ targets:
       - sdk: MetalKit.framework
       # GameController for physical gamepad support (M2: GamepadManager.swift)
       - sdk: GameController.framework
+      # JavaScriptCore for safe plugins.js parsing (M4: PluginManager.swift)
+      - sdk: JavaScriptCore.framework
     scheme:
       testTargets:
         - RPGPlayerTests

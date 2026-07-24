@@ -43,6 +43,15 @@ struct StorageManager {
         return url
     }
 
+    /// Application Support/RPGPlayer/Games/<uuid>/Cache/
+    /// Runtime cache sinh ra khi chơi game (audio decode buffer, texture cache, v.v.)
+    /// Có thể xóa an toàn mà không mất save hay asset gốc.
+    func cacheURL(for gameID: UUID) -> URL {
+        let url = sandboxURL(for: gameID).appendingPathComponent("Cache", isDirectory: true)
+        // Không createIfNeeded — chỉ tạo khi game thực sự cần ghi cache.
+        return url
+    }
+
     // MARK: - Metadata
 
     /// Application Support/RPGPlayer/library.json
@@ -74,6 +83,29 @@ struct StorageManager {
         directorySize(at: sandboxURL(for: gameID))
     }
 
+    /// Dung lượng thư mục Cache/ (byte). 0 nếu chưa tạo.
+    func cacheSize(for gameID: UUID) -> Int64 {
+        let url = cacheURL(for: gameID)
+        guard FileManager.default.fileExists(atPath: url.path) else { return 0 }
+        return directorySize(at: url)
+    }
+
+    /// Dung lượng thư mục Saves/ (byte). 0 nếu chưa tạo.
+    func savesSize(for gameID: UUID) -> Int64 {
+        let url = sandboxURL(for: gameID).appendingPathComponent("Saves")
+        guard FileManager.default.fileExists(atPath: url.path) else { return 0 }
+        return directorySize(at: url)
+    }
+
+    /// Dung lượng asset gốc (byte) = total − cache − saves.
+    /// Đây là dung lượng file game do user import vào.
+    func assetSize(for gameID: UUID) -> Int64 {
+        let total  = totalSize(for: gameID)
+        let cache  = cacheSize(for: gameID)
+        let saves  = savesSize(for: gameID)
+        return max(0, total - cache - saves)
+    }
+
     func directorySize(at url: URL) -> Int64 {
         let fm = FileManager.default
         guard let enumerator = fm.enumerator(
@@ -90,6 +122,15 @@ struct StorageManager {
             total += Int64(size)
         }
         return total
+    }
+
+    /// Xóa thư mục Cache/ và không tạo lại (sẽ được tạo lazy khi game cần).
+    /// Saves và asset gốc không bị ảnh hưởng.
+    func deleteCache(for gameID: UUID) throws {
+        let url = cacheURL(for: gameID)
+        guard FileManager.default.fileExists(atPath: url.path) else { return }
+        try FileManager.default.removeItem(at: url)
+        print("[StorageManager] 🧹 Cache deleted for \(gameID)")
     }
 
     /// Xoá toàn bộ sandbox của game (kể cả save)

@@ -1,6 +1,7 @@
 // RPGPlayer/UI/Settings/SettingsView.swift
 //
 // M3: Settings screen — iCloud sync toggle + status display.
+// M4: Added storage management section (CleanupView link).
 // Presented as a sheet from LibraryView toolbar.
 
 import SwiftUI
@@ -96,7 +97,30 @@ struct SettingsView: View {
                     }
                     .listRowBackground(Color(white: 0.12))
 
-                    // ── About ────────────────────────────────────────────
+                    // ── Bộ nhớ (M4) ───────────────────────────────────────
+                    Section {
+                        NavigationLink(destination: CleanupView()) {
+                            Label {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text("Quản lý bộ nhớ")
+                                        .font(.body.weight(.medium))
+                                        .foregroundStyle(.white)
+                                    Text("Xem dung lượng, xóa cache hoặc xóa game")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                            } icon: {
+                                Image(systemName: "internaldrive")
+                                    .foregroundStyle(.orange)
+                            }
+                        }
+                    } header: {
+                        Text("Bộ nhớ")
+                            .foregroundStyle(.secondary)
+                    }
+                    .listRowBackground(Color(white: 0.12))
+
+                    // ── About ─────────────────────────────────────────────
                     Section {
                         aboutRow(icon: "gamecontroller", label: "Engine RGSS", value: "mruby (MIT)")
                         aboutRow(icon: "doc.zipper", label: "Giải nén ZIP", value: "ZIPFoundation (MIT)")
