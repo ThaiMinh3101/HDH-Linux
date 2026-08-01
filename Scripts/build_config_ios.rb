@@ -61,10 +61,14 @@ MRuby::CrossBuild.new("ios") do |conf|
 
   conf.bins = []   # No standalone executables — library only
 
-  # ── Gem selection (default minus mruby-io) ───────────────────────────────
+  # ── Gem selection (default minus mruby-io) ──────────────────────────────
+  # Full list confirmed against mruby 3.3.0 mrbgems/ directory via GitHub API.
+  # REMOVED: mruby-gemcut  — external gem (dearblue/mruby-gemcut), not in mruby source.
+  #           Not needed: we list each gem explicitly, no cherry-picking required.
+  # REMOVED: mruby-comparable — does NOT exist in 3.3.0; Comparable is mruby built-in.
+  #           The correct gem name is mruby-compar-ext (already included below).
   conf.gem :core => "mruby-sprintf"
   conf.gem :core => "mruby-print"
-  conf.gem :core => "mruby-gemcut"
   conf.gem :core => "mruby-metaprog"
   conf.gem :core => "mruby-method"
   conf.gem :core => "mruby-fiber"       # Important: RGSS uses fibers for scene loops
@@ -74,8 +78,7 @@ MRuby::CrossBuild.new("ios") do |conf|
   conf.gem :core => "mruby-numeric-ext"
   conf.gem :core => "mruby-array-ext"
   conf.gem :core => "mruby-hash-ext"
-  conf.gem :core => "mruby-comparable"
-  conf.gem :core => "mruby-compar-ext"
+  conf.gem :core => "mruby-compar-ext"  # Comparable module extensions
   conf.gem :core => "mruby-enum-ext"
   conf.gem :core => "mruby-math"
   conf.gem :core => "mruby-time"
@@ -126,10 +129,10 @@ MRuby::CrossBuild.new("ios-sim") do |conf|
 
   conf.bins = []
 
-  # Same gem set as device target
+  # Same gem set as device target — confirmed against mruby 3.3.0 mrbgems/ directory.
+  # mruby-gemcut and mruby-comparable removed (see ios target above for reason).
   conf.gem :core => "mruby-sprintf"
   conf.gem :core => "mruby-print"
-  conf.gem :core => "mruby-gemcut"
   conf.gem :core => "mruby-metaprog"
   conf.gem :core => "mruby-method"
   conf.gem :core => "mruby-fiber"
@@ -139,8 +142,7 @@ MRuby::CrossBuild.new("ios-sim") do |conf|
   conf.gem :core => "mruby-numeric-ext"
   conf.gem :core => "mruby-array-ext"
   conf.gem :core => "mruby-hash-ext"
-  conf.gem :core => "mruby-comparable"
-  conf.gem :core => "mruby-compar-ext"
+  conf.gem :core => "mruby-compar-ext"  # Comparable module extensions
   conf.gem :core => "mruby-enum-ext"
   conf.gem :core => "mruby-math"
   conf.gem :core => "mruby-time"
