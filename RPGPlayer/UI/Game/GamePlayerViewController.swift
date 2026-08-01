@@ -270,11 +270,11 @@ final class GamePlayerViewController: UIViewController {
         func f(_ v: Float) -> String { String(format: "%.3f", v) }
         return """
         {"dpadUp":\(b(s.dpadUp)),"dpadDown":\(b(s.dpadDown)),\
-"dpadLeft":\(b(s.dpadLeft)),"dpadRight":\(b(s.dpadRight)),\
-"buttonA":\(b(s.buttonA)),"buttonB":\(b(s.buttonB)),\
-"buttonC":\(b(s.buttonC)),"buttonD":\(b(s.buttonD)),\
-"l1":\(b(s.l1)),"r1":\(b(s.r1)),"l2":\(f(s.l2)),"r2":\(f(s.r2)),\
-"start":\(b(s.start)),"select":\(b(s.select))}
+        "dpadLeft":\(b(s.dpadLeft)),"dpadRight":\(b(s.dpadRight)),\
+        "buttonA":\(b(s.buttonA)),"buttonB":\(b(s.buttonB)),\
+        "buttonC":\(b(s.buttonC)),"buttonD":\(b(s.buttonD)),\
+        "l1":\(b(s.l1)),"r1":\(b(s.r1)),"l2":\(f(s.l2)),"r2":\(f(s.r2)),\
+        "start":\(b(s.start)),"select":\(b(s.select))}
         """.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
