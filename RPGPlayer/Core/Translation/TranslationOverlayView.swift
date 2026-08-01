@@ -1,6 +1,6 @@
 // RPGPlayer/Core/Translation/TranslationOverlayView.swift
 //
-// M5: Translation overlay dùng Apple Translation framework (iOS 17.4+).
+// M5: Translation overlay dùng Apple Translation framework.
 //
 // Thiết kế:
 //  - Hiển thị bản dịch dưới game dưới dạng subtitle strip (không che game).
@@ -9,9 +9,11 @@
 //  - Auto-detect ngôn ngữ nguồn qua Apple Translation (không hardcode).
 //  - Overlay ẩn khi không có text đang hiện, tự fade-out sau 4s không nhận text mới.
 //
-// Ràng buộc:
-//  - Apple Translation framework chỉ available iOS 17.4+. Trên iOS <17.4
-//    view vẫn compile (guard @available), chỉ silently không hiện gì.
+// Availability:
+//  - TranslationSession + TranslationSession.Configuration chỉ available từ iOS 18.0
+//    (không phải 17.4). TranslationOverlayView được guard bởi @available(iOS 18.0, *).
+//  - Deployment target vẫn giữ 17.4: trên iOS 17.x app chạy bình thường, chỉ không
+//    có tính năng dịch (toggle button ẩn, TranslationOverlayViewCompat render nothing).
 //  - On-device model: không gửi data ra ngoài mạng.
 
 import SwiftUI
@@ -21,7 +23,8 @@ import Translation
 
 /// SwiftUI view hiển thị subtitle dịch phía dưới game.
 /// Host trong UIHostingController và add vào RGSSViewController / GamePlayerViewController.
-@available(iOS 17.4, *)
+/// Requires iOS 18.0+ (TranslationSession available từ iOS 18.0, không phải 17.4).
+@available(iOS 18.0, *)
 struct TranslationOverlayView: View {
 
     // MARK: - Input từ parent
@@ -251,7 +254,7 @@ struct TranslationOverlayView: View {
     }
 }
 
-// MARK: - Fallback for iOS < 17.4
+// MARK: - Fallback for iOS < 18.0
 
 /// @Observable bridge — single source of truth cho text từ game engine.
 /// UIKit set bridge.pendingText, SwiftUI đọc trực tiếp (không cần @Binding).
@@ -260,17 +263,18 @@ final class TranslationTextBridge {
     var pendingText: String = ""
 }
 
-/// Wrapper hiển thị tính năng dịch. Đọc pendingText từ bridge @Observable.
+/// Wrapper hiển thị tính năng dịch.
+/// Dùng #available(iOS 18.0, *) thay vì 17.4 vì TranslationSession cần iOS 18.0.
 struct TranslationOverlayViewCompat: View {
     let entry: GameEntry
     @Bindable var bridge: TranslationTextBridge
 
     var body: some View {
-        if #available(iOS 17.4, *) {
+        if #available(iOS 18.0, *) {
             // Chuyển bridge.pendingText thành @Binding cho TranslationOverlayView
             TranslationOverlayView(entry: entry, pendingText: $bridge.pendingText)
         }
-        // Trên iOS < 17.4: không render gì (tính năng không available)
+        // Trên iOS < 18.0: không render gì (TranslationSession không available)
     }
 }
 
