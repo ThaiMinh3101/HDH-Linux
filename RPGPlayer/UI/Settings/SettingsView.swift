@@ -2,14 +2,24 @@
 //
 // M3: Settings screen — iCloud sync toggle + status display.
 // M4: Added storage management section (CleanupView link).
+// M5: Added translation section (default target language picker).
 // Presented as a sheet from LibraryView toolbar.
 
 import SwiftUI
+import Translation
 
 struct SettingsView: View {
 
     @StateObject private var cloudSync = CloudSaveManager.shared
     @Environment(\.dismiss) private var dismiss
+
+    // M5: Default target language — lưu per-app, dùng làm fallback khi game chưa set riêng.
+    // Bản thân game lưu targetLanguageCode riêng trong GameEntry.
+    @AppStorage("rpgplayer_default_target_language") private var defaultTargetLang: String = {
+        // Default: tiếng Việt, trừ phi hệ thống đang dùng ngôn ngữ khác không phải tiếng Nhật
+        let sys = Locale.current.language.languageCode?.identifier ?? "vi"
+        return sys == "ja" ? "vi" : sys
+    }()
 
     var body: some View {
         NavigationStack {
@@ -94,6 +104,43 @@ struct SettingsView: View {
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
+                    }
+                    .listRowBackground(Color(white: 0.12))
+
+                    // ── Dịch thuật (M5) ───────────────────────────────────────────────
+                    Section {
+                        Picker(selection: $defaultTargetLang) {
+                            ForEach(translationTargetLanguages, id: \.code) { lang in
+                                Text(lang.displayName)
+                                    .tag(lang.code)
+                            }
+                        } label: {
+                            Label {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text("Ngôn ngữ dịch mặc định")
+                                        .font(.body.weight(.medium))
+                                        .foregroundStyle(.white)
+                                    Text("Game chưa chọn riêng sẽ dùng mục này")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                            } icon: {
+                                Image(systemName: "character.bubble")
+                                    .foregroundStyle(.cyan)
+                            }
+                        }
+                        .pickerStyle(.navigationLink)
+                        .tint(.cyan)
+                    } header: {
+                        Text("Dịch thuật")
+                            .foregroundStyle(.secondary)
+                    } footer: {
+                        Text("""
+                            Dùng Apple Translation (on-device, iOS 17.4+). Ngôn ngữ nguồn tự động nhận diện. \
+                            Mỗi game có thể đặt ngôn ngữ riêng từ menu trong game.
+                            """)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                     }
                     .listRowBackground(Color(white: 0.12))
 
@@ -196,6 +243,33 @@ struct SettingsView: View {
         }
     }
 }
+
+// MARK: - Translation language list
+
+/// Danh sách ngôn ngữ dịch đích mà Apple Translation hỗ trợ tốt.
+/// BCP-47 code phải khớp với Locale.Language(languageCode:).
+struct TranslationTargetLanguage: Identifiable {
+    let id = UUID()
+    let code: String
+    let displayName: String
+}
+
+let translationTargetLanguages: [TranslationTargetLanguage] = [
+    .init(code: "vi",      displayName: "🇻🇳 Tiếng Việt"),
+    .init(code: "en",      displayName: "🇺🇸 English"),
+    .init(code: "zh-Hans", displayName: "🇨🇳 中文（简体）"),
+    .init(code: "zh-Hant", displayName: "🇹🇼 中文（繁體）"),
+    .init(code: "ko",      displayName: "🇰🇷 한국어"),
+    .init(code: "fr",      displayName: "🇫🇷 Français"),
+    .init(code: "de",      displayName: "🇩🇪 Deutsch"),
+    .init(code: "es",      displayName: "🇪🇸 Español"),
+    .init(code: "pt",      displayName: "🇧🇷 Português"),
+    .init(code: "ru",      displayName: "🇷🇺 Русский"),
+    .init(code: "it",      displayName: "🇮🇹 Italiano"),
+    .init(code: "ar",      displayName: "🇸🇦 العربية"),
+    .init(code: "th",      displayName: "🇹🇭 ภาษาไทย"),
+    .init(code: "id",      displayName: "🇮🇩 Bahasa Indonesia"),
+]
 
 #Preview {
     SettingsView()

@@ -2,6 +2,7 @@ import UIKit
 import WebKit
 import SwiftUI
 import Combine
+import Translation
 
 // MARK: - GamePlayerViewController
 // UIViewController that hosts a full-screen WKWebView for playing
@@ -29,6 +30,9 @@ final class GamePlayerViewController: UIViewController {
     private var dpadHostingController: UIHostingController<VirtualDpadView>?
     private var gamepadCancellable: AnyCancellable?
 
+    // M5: Translation overlay
+    private var translationOverlay: TranslationOverlayHostingController?
+
     // MARK: - Init
 
     init(entry: GameEntry) {
@@ -48,8 +52,9 @@ final class GamePlayerViewController: UIViewController {
         launchWallTime = Date()
         buildWebView()
         loadGame()
-        setupDpadOverlay()    // M2: virtual D-pad on top of WKWebView
-        startDisplayLink()    // M2: 60fps input push to GamepadBridge.js
+        setupDpadOverlay()       // M2: virtual D-pad on top of WKWebView
+        startDisplayLink()       // M2: 60fps input push to GamepadBridge.js
+        setupTranslationOverlay() // M5: subtitle translation overlay
     }
 
     override func viewWillAppear(_ animated: Bool) {
@@ -128,6 +133,7 @@ final class GamePlayerViewController: UIViewController {
         ucc.add(WeakMessageHandler(delegate: self), name: "rpgSaveRemove")
         ucc.add(WeakMessageHandler(delegate: self), name: "rpgQuit")
         ucc.add(WeakMessageHandler(delegate: self), name: "rpgConsole")
+        ucc.add(WeakMessageHandler(delegate: self), name: "rpgTranslate")  // M5
 
         // Inject scripts in order — all at document start so they're ready
         // before any game script executes.
@@ -136,6 +142,18 @@ final class GamePlayerViewController: UIViewController {
         injectUserScript(named: "NWJSPolyfill",       into: ucc, at: .atDocumentStart)
         injectUserScript(named: "SaveBridge",         into: ucc, at: .atDocumentStart)
         injectUserScript(named: "GamepadBridge",      into: ucc, at: .atDocumentStart)
+        injectUserScript(named: "FPSMonitor",         into: ucc, at: .atDocumentStart)  // M5
+
+        // M5: TranslationBridge — inject với enabled flag từ entry.translationEnabled.
+        // Inject flag trước script để TranslationBridge đọc được ngay khi chạy.
+        let translationFlag = entry.translationEnabled ? "true" : "false"
+        let flagScript = WKUserScript(
+            source: "window.__rpgTranslationEnabled = \(translationFlag);",
+            injectionTime: .atDocumentStart,
+            forMainFrameOnly: false
+        )
+        ucc.addUserScript(flagScript)
+        injectUserScript(named: "TranslationBridge", into: ucc, at: .atDocumentStart)  // M5
     }
 
     private func injectUserScript(
@@ -194,6 +212,30 @@ final class GamePlayerViewController: UIViewController {
             .sink { connected in
                 print("[GamePlayer] Gamepad \(connected ? "connected" : "disconnected") — D-pad overlay \(connected ? "hidden" : "visible")")
             }
+    }
+
+    // MARK: - M5: Translation overlay
+
+    private func setupTranslationOverlay() {
+        let hostVC = TranslationOverlayHostingController(entry: entry)
+        addChild(hostVC)
+        hostVC.view.frame = view.bounds
+        hostVC.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        hostVC.view.backgroundColor = .clear
+        hostVC.view.isUserInteractionEnabled = true
+        // Add on top of D-pad (translation button must be tappable)
+        view.addSubview(hostVC.view)
+        hostVC.didMove(toParent: self)
+        translationOverlay = hostVC
+    }
+
+    /// Cập nhật enabled flag trong JS khi user toggle từ overlay button.
+    /// Gọi khi TranslationOverlayView thay đổi translationEnabled (observe via LibraryStore).
+    private func pushTranslationEnabledToJS(_ enabled: Bool) {
+        let js = "if(window.__rpgSetTranslationEnabled) window.__rpgSetTranslationEnabled(\(enabled ? "true" : "false"));"
+        webView?.evaluateJavaScript(js) { _, error in
+            if let error { print("[GamePlayer][Translation] JS toggle error: \(error)") }
+        }
     }
 
     // MARK: - M2: CADisplayLink — push InputState → GamepadBridge.js
@@ -355,8 +397,11 @@ extension GamePlayerViewController: WKScriptMessageHandler {
                 let type = dict["type"] as? String ?? "log"
                 switch type {
                 case "fps":
-                    let fps = dict["value"] as? Double ?? 0
-                    print("[GamePlayer][FPS] \(fps) fps")
+                    // M5: FPSMonitor.js báo FPS thực của WKWebView render loop.
+                    let fps      = dict["value"]    as? Double ?? 0
+                    let budget   = dict["budgetMs"] as? Double ?? 0
+                    let budgetStr = budget > 0 ? String(format: " (%.1fms/frame)", budget) : ""
+                    print("[GamePlayer][FPS] \(Int(fps)) fps\(budgetStr)")
 
                 case "webgl":
                     let renderer = dict["renderer"] as? String ?? "unknown"
@@ -382,6 +427,17 @@ extension GamePlayerViewController: WKScriptMessageHandler {
 
                 default:
                     print("[GamePlayer][JS] \(dict)")
+                }
+            }
+
+        case "rpgTranslate":
+            // M5: TranslationBridge.js gửi text cần dịch.
+            if let dict = message.body as? [String: Any],
+               let text = dict["text"] as? String,
+               !text.isEmpty {
+                print("[GamePlayer][Translation] Received text (\(text.count) chars)")
+                DispatchQueue.main.async { [weak self] in
+                    self?.translationOverlay?.receiveText(text)
                 }
             }
 

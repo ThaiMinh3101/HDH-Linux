@@ -60,6 +60,17 @@ struct GameEntry: Identifiable, Codable, Equatable {
     /// Dung lượng file tính bằng byte (update khi import)
     var sizeBytes: Int64
 
+    // MARK: - M5: Per-game translation settings
+
+    /// Bật/tắt overlay dịch cho game này. Mặc định false.
+    /// Lưu trong library.json, không dùng chung với game khác.
+    var translationEnabled: Bool
+
+    /// BCP-47 language code của ngôn ngữ dịch đích.
+    /// nil = theo ngôn ngữ hệ thống (Locale.current.language.languageCode?.identifier).
+    /// Ví dụ: "vi" (tiếng Việt), "en" (tiếng Anh), "zh-Hans"
+    var targetLanguageCode: String?
+
     init(
         id: UUID = UUID(),
         name: String,
@@ -67,7 +78,9 @@ struct GameEntry: Identifiable, Codable, Equatable {
         importDate: Date = Date(),
         relativeSandboxPath: String,
         relativeThumbnailPath: String? = nil,
-        sizeBytes: Int64 = 0
+        sizeBytes: Int64 = 0,
+        translationEnabled: Bool = false,
+        targetLanguageCode: String? = nil
     ) {
         self.id = id
         self.name = name
@@ -76,5 +89,31 @@ struct GameEntry: Identifiable, Codable, Equatable {
         self.relativeSandboxPath = relativeSandboxPath
         self.relativeThumbnailPath = relativeThumbnailPath
         self.sizeBytes = sizeBytes
+        self.translationEnabled = translationEnabled
+        self.targetLanguageCode = targetLanguageCode
+    }
+
+    // MARK: - Codable với giá trị mặc định cho field mới (backward compat)
+    // Khi đọc library.json cũ (thiếu translationEnabled/targetLanguageCode),
+    // Swift dùng init từ decoder nên cần CodingKeys để set default.
+
+    enum CodingKeys: String, CodingKey {
+        case id, name, engine, importDate
+        case relativeSandboxPath, relativeThumbnailPath, sizeBytes
+        case translationEnabled, targetLanguageCode
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id                   = try c.decode(UUID.self,       forKey: .id)
+        name                 = try c.decode(String.self,     forKey: .name)
+        engine               = try c.decode(GameEngine.self, forKey: .engine)
+        importDate           = try c.decode(Date.self,       forKey: .importDate)
+        relativeSandboxPath  = try c.decode(String.self,     forKey: .relativeSandboxPath)
+        relativeThumbnailPath = try c.decodeIfPresent(String.self, forKey: .relativeThumbnailPath)
+        sizeBytes            = try c.decode(Int64.self,      forKey: .sizeBytes)
+        // Backward-compat: field mới không có trong file cũ → default values
+        translationEnabled   = try c.decodeIfPresent(Bool.self,   forKey: .translationEnabled) ?? false
+        targetLanguageCode   = try c.decodeIfPresent(String.self, forKey: .targetLanguageCode)
     }
 }

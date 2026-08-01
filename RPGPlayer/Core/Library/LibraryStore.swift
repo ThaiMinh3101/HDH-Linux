@@ -155,6 +155,21 @@ final class LibraryStore {
         save()
     }
 
+    // MARK: - M5: Translation settings per game
+
+    /// C\u1eadp nh\u1eadt c\u00e0i \u0111\u1eb7t d\u1ecbch cho m\u1ed9t game c\u1ee5 th\u1ec3 v\u00e0 persist ngay v\u00e0o library.json.
+    /// G\u1ecdi t\u1eeb TranslationOverlayView (toggle button) ho\u1eb7c SettingsView (ch\u1ecdn target language).
+    func updateTranslationSettings(
+        for id: UUID,
+        enabled: Bool? = nil,
+        targetLanguageCode: String?? = .none   // .none = kh\u00f4ng thay \u0111\u1ed5i, .some(nil) = reset v\u1ec1 system
+    ) {
+        guard let idx = games.firstIndex(where: { $0.id == id }) else { return }
+        if let enabled { games[idx].translationEnabled = enabled }
+        if case .some(let code) = targetLanguageCode { games[idx].targetLanguageCode = code }
+        save()
+    }
+
     // MARK: - Helpers
 
     func absoluteSandboxURL(for entry: GameEntry) -> URL {

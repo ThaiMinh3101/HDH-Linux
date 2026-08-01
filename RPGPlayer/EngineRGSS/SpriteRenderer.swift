@@ -2,6 +2,7 @@
 //
 // MetalKit-based renderer for RGSS sprites.
 // M1b: renders a single sprite texture full-screen as proof-of-concept.
+// M5:  added per-frame FPS measurement (logged every 2s for profiling).
 // Future milestones will add layered rendering, viewports, z-ordering, etc.
 
 import MetalKit
@@ -28,6 +29,17 @@ final class SpriteRenderer: NSObject, MTKViewDelegate {
     /// Updated from any thread; read on draw thread (both go through Metal's
     /// internal synchronisation in MTKView for M1b single-texture use).
     private(set) var currentTexture: MTLTexture?
+
+    // MARK: - M5: FPS profiling
+
+    /// Frame counter reset every FPS report interval.
+    private var frameCount: Int = 0
+    /// CACurrentMediaTime at last FPS log.
+    private var lastReportTime: CFTimeInterval = CACurrentMediaTime()
+    /// Report FPS every N seconds.
+    private let fpsReportInterval: CFTimeInterval = 2.0
+    /// Last measured FPS (readable from outside for debugging).
+    private(set) var measuredFPS: Double = 0.0
 
     // MARK: - Init
 
@@ -213,5 +225,18 @@ final class SpriteRenderer: NSObject, MTKViewDelegate {
         encoder.endEncoding()
         commandBuffer.present(drawable)
         commandBuffer.commit()
+
+        // M5: FPS measurement — called on MTKView draw thread (not main thread).
+        // Uses CACurrentMediaTime() which is monotonic and suitable for frame timing.
+        frameCount += 1
+        let now = CACurrentMediaTime()
+        let elapsed = now - lastReportTime
+        if elapsed >= fpsReportInterval {
+            measuredFPS = Double(frameCount) / elapsed
+            let budgetMs = elapsed / Double(max(1, frameCount)) * 1000.0
+            print(String(format: "[Metal][FPS] %.0f fps (%.2f ms/frame)", measuredFPS, budgetMs))
+            frameCount = 0
+            lastReportTime = now
+        }
     }
 }

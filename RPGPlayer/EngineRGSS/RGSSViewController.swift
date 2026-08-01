@@ -4,11 +4,15 @@
 // M1b: runs the "Hello Sprite" test script to prove the full pipeline.
 // M2:  adds CADisplayLink frame loop for per-frame input update,
 //      and VirtualDpadView overlay (hidden when physical gamepad is connected).
+// M5:  adds TranslationOverlayHostingController subtitle overlay.
+//      Translation text hook for RGSS Window_Message is a TODO —
+//      will be wired up when Window_Message mruby binding is implemented.
 
 import UIKit
 import MetalKit
 import Combine
 import SwiftUI
+import Translation
 
 final class RGSSViewController: UIViewController {
 
@@ -16,6 +20,10 @@ final class RGSSViewController: UIViewController {
 
     /// Root folder of the RGSS game (used in future milestones to load Scripts).
     var gamePath: URL?
+
+    /// M5: GameEntry for translation overlay.
+    /// Set by the presenter (LibraryView / GameDetailView) before pushing this VC.
+    var gameEntryForTranslation: GameEntry?
 
     // MARK: - Private properties
 
@@ -33,6 +41,9 @@ final class RGSSViewController: UIViewController {
     /// Observation token for gamepad connection changes.
     private var gamepadCancellable: AnyCancellable?
 
+    /// M5: Translation overlay — same subtitle-strip UI as GamePlayerViewController.
+    private var translationOverlay: TranslationOverlayHostingController?
+
     // MARK: - View lifecycle
 
     override func viewDidLoad() {
@@ -48,6 +59,11 @@ final class RGSSViewController: UIViewController {
         setupDpadOverlay()
         startDisplayLink()
         startRubyEngine()
+        // M5: Translation overlay setup
+        // gamePath is set by the presenter before viewDidLoad if launching via LibraryStore.
+        if let entry = gameEntryForTranslation {
+            setupTranslationOverlay(entry: entry)
+        }
     }
 
     override func viewWillAppear(_ animated: Bool) {
@@ -115,6 +131,27 @@ final class RGSSViewController: UIViewController {
             .sink { connected in
                 print("[RGSSViewController] Gamepad connected: \(connected) → D-pad overlay \(connected ? "hidden" : "visible")")
             }
+    }
+
+    // MARK: - Translation overlay (M5)
+
+    private func setupTranslationOverlay(entry: GameEntry) {
+        let hostVC = TranslationOverlayHostingController(entry: entry)
+        addChild(hostVC)
+        hostVC.view.frame = view.bounds
+        hostVC.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        hostVC.view.backgroundColor = .clear
+        hostVC.view.isUserInteractionEnabled = true
+        view.addSubview(hostVC.view)  // On top of D-pad overlay
+        hostVC.didMove(toParent: self)
+        translationOverlay = hostVC
+    }
+
+    /// Gọi từ Window_Message mruby binding khi có text hiển thị.
+    /// TODO: wire up khi Window_Message binding được implement.
+    @MainActor
+    func receiveTranslationText(_ text: String) {
+        translationOverlay?.receiveText(text)
     }
 
     // MARK: - CADisplayLink (M2: input pump)

@@ -46,7 +46,12 @@ MRuby::CrossBuild.new("ios") do |conf|
 
   conf.archiver do |ar|
     ar.command = ios_ar
-    ar.flags = ["rcs"]
+    # MRuby::Command::Archiver 3.3.0: attribute is `archive_options` (format string),
+    # NOT `flags` (which does not exist on Archiver — only on Compiler/Linker).
+    # Confirmed from mruby/mruby@3.3.0 lib/mruby/build/command.rb: attr_accessor :archive_options
+    # Placeholders: %{outfile} = output .a path, %{objs} = space-separated .o files.
+    # 'rcs': r=insert/replace, c=create if not exist, s=write symbol table index.
+    ar.archive_options = 'rcs %{outfile} %{objs}'
   end
 
   conf.linker do |linker|
@@ -109,7 +114,9 @@ MRuby::CrossBuild.new("ios-sim") do |conf|
 
   conf.archiver do |ar|
     ar.command = sim_ar
-    ar.flags = ["rcs"]
+    # MRuby::Command::Archiver 3.3.0: attribute is `archive_options` (format string),
+    # NOT `flags`. Same fix as iOS device target above.
+    ar.archive_options = 'rcs %{outfile} %{objs}'
   end
 
   conf.linker do |linker|
