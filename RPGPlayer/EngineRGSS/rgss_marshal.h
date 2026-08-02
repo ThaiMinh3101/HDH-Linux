@@ -96,11 +96,19 @@ struct RGSSValue {
 
 // ── Allocator context ──────────────────────────────────────────────────────
 // All allocations go through a bump arena — cheap and trivially freed.
+// Full struct definition is exposed here so .c files that need to create
+// stack-allocated dummy arenas (e.g. mruby_marshal_binding.c) can do so
+// without requiring a public rgss_arena_alloc() API.
 
-typedef struct RGSSArena RGSSArena;
+typedef struct RGSSArena {
+    uint8_t *base;
+    size_t   cap;
+    size_t   used;
+} RGSSArena;
 
 RGSSArena  *rgss_arena_create(size_t capacity); // suggested: 2 MB
 void        rgss_arena_destroy(RGSSArena *a);
+
 
 // ── Decoder ───────────────────────────────────────────────────────────────
 

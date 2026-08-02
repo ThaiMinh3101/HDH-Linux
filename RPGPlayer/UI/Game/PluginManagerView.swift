@@ -266,8 +266,11 @@ struct PluginManagerView: View {
         isLoading = true
         loadError = nil
 
+        // Capture gameRoot on MainActor before entering detached task
+        // (gameRoot is @MainActor-isolated; accessing it inside Task.detached requires await)
+        let root = gameRoot
         let loaded = await Task.detached(priority: .userInitiated) {
-            PluginManager.loadPlugins(from: gameRoot)
+            PluginManager.loadPlugins(from: root)
         }.value
 
         isLoading = false

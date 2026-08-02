@@ -14,6 +14,7 @@
 #include <mruby/string.h>
 #include <mruby/compile.h>
 #include <mruby/value.h>
+#include <mruby/variable.h>   /* mrb_iv_set, mrb_iv_get */
 #include <string.h>
 #include <stdio.h>
 

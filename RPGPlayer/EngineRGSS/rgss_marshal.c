@@ -37,11 +37,8 @@
 
 #define ARENA_ALIGN 8
 
-struct RGSSArena {
-    uint8_t *base;
-    size_t   cap;
-    size_t   used;
-};
+/* struct RGSSArena is defined in rgss_marshal.h — included above */
+
 
 RGSSArena *rgss_arena_create(size_t capacity) {
     RGSSArena *a = malloc(sizeof(RGSSArena));

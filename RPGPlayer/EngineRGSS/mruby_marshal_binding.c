@@ -34,6 +34,33 @@
 // ── Default arena size for decode: 4 MB ──────────────────────────────────
 #define DECODE_ARENA_SIZE (4 * 1024 * 1024)
 
+// ── ivar collection helper for mrb_iv_foreach ────────────────────────────
+// mrb_obj_instance_variables does not exist in mruby 3.3.0 public API.
+// We use mrb_iv_foreach (variable.h) to iterate over all instance variables
+// and collect them into a flat sym[] / val[] pair.
+//
+// Maximum ivars per object: RPG Maker save objects typically have < 50 ivars.
+// Using a fixed-size stack buffer avoids heap allocation in the hot path.
+
+#define IVAR_COLLECT_MAX 256
+
+typedef struct {
+    mrb_state  *mrb;
+    mrb_sym     syms[IVAR_COLLECT_MAX];
+    mrb_value   vals[IVAR_COLLECT_MAX];
+    mrb_int     count;
+} IvarCtx;
+
+static int collect_ivar(mrb_state *mrb, mrb_sym sym, mrb_value val, void *p) {
+    IvarCtx *ctx = (IvarCtx *)p;
+    if (ctx->count < IVAR_COLLECT_MAX) {
+        ctx->syms[ctx->count] = sym;
+        ctx->vals[ctx->count] = val;
+        ctx->count++;
+    }
+    return 0;  /* 0 = continue iteration */
+}
+
 // ── mrb_value → RGSSValue (for Marshal.dump) ─────────────────────────────
 // We use a simple bump-arena for the value tree; freed after encoding.
 
@@ -41,10 +68,9 @@ static RGSSValue *mrb_to_rgss(mrb_state *mrb, mrb_value v, RGSSArena *arena);
 
 // Recursively convert an mrb_value to RGSSValue.
 static RGSSValue *mrb_to_rgss(mrb_state *mrb, mrb_value v, RGSSArena *arena) {
-    // Allocate RGSSValue from arena
-    RGSSValue *rv = (RGSSValue *)arena->base;  // won't use arena_alloc directly
-    // Use heap for dump-side (arena is only for decode). Use plain malloc.
-    rv = malloc(sizeof(RGSSValue));
+    (void)arena;  /* dump-side uses malloc; arena param kept for recursive call signature */
+    // Dump-side always uses malloc (arena is only for decode-side bump alloc).
+    RGSSValue *rv = malloc(sizeof(RGSSValue));
     if (!rv) return NULL;
     memset(rv, 0, sizeof(RGSSValue));
 
@@ -122,17 +148,21 @@ static RGSSValue *mrb_to_rgss(mrb_state *mrb, mrb_value v, RGSSArena *arena) {
             rv->as.obj.class_name = malloc(strlen(cn) + 1);
             if (rv->as.obj.class_name) strcpy(rv->as.obj.class_name, cn);
 
-            // Instance variables
-            mrb_value ivar_names = mrb_obj_instance_variables(mrb, v);
-            mrb_int   icount     = RARRAY_LEN(ivar_names);
+            // Instance variables — use mrb_iv_foreach (mruby 3.3.0 public API)
+            IvarCtx ctx;
+            ctx.mrb   = mrb;
+            ctx.count = 0;
+            mrb_iv_foreach(mrb, v, collect_ivar, &ctx);
+
+            mrb_int icount = ctx.count;
             rv->as.obj.ivars.count  = (size_t)icount;
             rv->as.obj.ivars.keys   = icount > 0 ? malloc((size_t)icount * sizeof(RGSSValue *)) : NULL;
             rv->as.obj.ivars.values = icount > 0 ? malloc((size_t)icount * sizeof(RGSSValue *)) : NULL;
             for (mrb_int i = 0; i < icount; i++) {
-                mrb_value iname = mrb_ary_ref(mrb, ivar_names, i);
-                mrb_value ival  = mrb_iv_get(mrb, v, mrb_symbol(iname));
-                rv->as.obj.ivars.keys[i]   = mrb_to_rgss(mrb, iname, arena);
-                rv->as.obj.ivars.values[i] = mrb_to_rgss(mrb, ival, arena);
+                // Convert sym name to mrb_value symbol for RGSSValue
+                mrb_value iname_sym = mrb_symbol_value(ctx.syms[i]);
+                rv->as.obj.ivars.keys[i]   = mrb_to_rgss(mrb, iname_sym, arena);
+                rv->as.obj.ivars.values[i] = mrb_to_rgss(mrb, ctx.vals[i], arena);
             }
             break;
         }
