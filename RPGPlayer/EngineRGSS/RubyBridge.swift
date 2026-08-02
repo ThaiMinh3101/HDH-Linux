@@ -24,8 +24,8 @@ private var _rgssRenderer: SpriteRenderer?
 /// The C callback dispatches renderer calls back to the main thread.
 final class RubyBridge {
 
-    // Opaque pointer to mrb_state (mruby VM)
-    private var mrb: OpaquePointer?
+    // Pointer to mrb_state (mruby VM) — matches the type returned by mrb_open()
+    private var mrb: UnsafeMutablePointer<mrb_state>?
 
     // MARK: - Lifecycle
 

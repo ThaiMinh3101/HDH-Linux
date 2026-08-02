@@ -196,18 +196,18 @@ struct SettingsView: View {
 
     // MARK: - Status helpers
 
-    private var statusIcon: some View {
+    private var statusIcon: AnyView {
         switch cloudSync.status {
         case .disabled:
-            return Image(systemName: "icloud.slash").foregroundStyle(.secondary)
+            return AnyView(Image(systemName: "icloud.slash").foregroundStyle(.secondary))
         case .idle:
-            return Image(systemName: "checkmark.icloud").foregroundStyle(.secondary)
+            return AnyView(Image(systemName: "checkmark.icloud").foregroundStyle(.secondary))
         case .syncing:
-            return Image(systemName: "icloud.and.arrow.up.and.arrow.down").foregroundStyle(.blue)
+            return AnyView(Image(systemName: "icloud.and.arrow.up.and.arrow.down").foregroundStyle(.blue))
         case .synced:
-            return Image(systemName: "checkmark.icloud.fill").foregroundStyle(.green)
+            return AnyView(Image(systemName: "checkmark.icloud.fill").foregroundStyle(.green))
         case .error:
-            return Image(systemName: "exclamationmark.icloud.fill").foregroundStyle(.red)
+            return AnyView(Image(systemName: "exclamationmark.icloud.fill").foregroundStyle(.red))
         }
     }
 
