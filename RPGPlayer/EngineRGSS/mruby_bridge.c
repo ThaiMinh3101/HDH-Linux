@@ -162,3 +162,9 @@ const char *mrb_bridge_last_error(mrb_state *mrb) {
   (void)mrb;
   return g_last_error;
 }
+
+void mrb_bridge_set_global_string(mrb_state *mrb, const char *name,
+                                  const char *data, size_t len) {
+  mrb_value str = mrb_str_new(mrb, data, (mrb_int)len);
+  mrb_gv_set(mrb, mrb_intern_cstr(mrb, name), str);
+}

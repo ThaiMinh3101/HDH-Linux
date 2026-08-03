@@ -56,6 +56,10 @@ final class RubyBridge {
     /// Data/Scripts.rvdata2). Thứ tự load cực kỳ quan trọng — script sau phụ
     /// thuộc class định nghĩa ở script trước.
     ///
+    /// M6.1: trước khi load scripts, load RPGClasses.rb (định nghĩa các class
+    /// RPG::* data classes) từ bundle — cần thiết để Marshal.load các file
+    /// .rvdata2 thật (object class RPG::Actor, RPG::Map, ...).
+    ///
     /// Error handling M6.0:
     ///   - SyntaxError   → log ❌ và dừng load (script hỏng = lỗi nghiêm trọng)
     ///   - runtime error → log ⚠️ và TIẾP TỤC (binding RGSS chưa implement hết,
@@ -104,6 +108,12 @@ final class RubyBridge {
         // Register Marshal module (M3: save/load via Marshal.load / Marshal.dump)
         mrb_define_marshal_module(mrbPtr)
         print("[RubyBridge] ✅ RGSS modules registered: Marshal")
+
+        // ---------------------------------------------------------------------------
+        // M6.1: Load RPG::* data classes (RPGClasses.rb) from bundle.
+        // Cần thiết để Marshal.load các file .rvdata2 thật.
+        // ---------------------------------------------------------------------------
+        loadRPGClasses(into: mrbPtr)
 
         // ---------------------------------------------------------------------------
         // Execute scripts in order
@@ -159,4 +169,104 @@ final class RubyBridge {
     /// Ngăn việc capture biến var trong closure @convention(c).
     /// Set ngay trong C callback, đọc ngay sau khi gọi.
     private var lastSyntaxFlag = false
+
+    // MARK: - M6.1: RPG::* data classes
+
+    /// Load RPGClasses.rb (định nghĩa RPG::* data classes) từ bundle vào VM.
+    /// File nằm trong Resources/ → được copy vào bundle root.
+    /// Dùng Bundle(for:) thay vì Bundle.main — trong unit test Bundle.main
+    /// trỏ tới test bundle (không có RPGClasses.rb), còn Bundle(for:) trỏ
+    /// tới app bundle chứa file.
+    /// Nếu không tìm thấy hoặc lỗi cú pháp → log ⚠️ (không dừng VM — game
+    /// script vẫn có thể chạy, chỉ là Marshal.load object RPG::* sẽ trả nil).
+    private func loadRPGClasses(into mrbPtr: UnsafeMutablePointer<mrb_state>) {
+        guard let url = Bundle(for: RubyBridge.self).url(forResource: "RPGClasses", withExtension: "rb"),
+              let source = try? String(contentsOf: url, encoding: .utf8) else {
+            print("[RubyBridge] ⚠️  Không tìm thấy RPGClasses.rb trong bundle")
+            return
+        }
+
+        var cBytes = source.utf8CString
+        let rc = cBytes.withUnsafeBufferPointer { buf in
+            var isSyntax = 0
+            let rc = mrb_bridge_load_nstring(mrbPtr, buf.baseAddress, buf.count - 1, &isSyntax)
+            lastSyntaxFlag = isSyntax != 0
+            return rc
+        }
+
+        if rc == 0 {
+            print("[RubyBridge] ✅ RPG::* data classes loaded (RPGClasses.rb)")
+        } else {
+            let err = String(cString: mrb_bridge_last_error(mrbPtr))
+            print("[RubyBridge] ⚠️  RPGClasses.rb load \(lastSyntaxFlag ? "SYNTAX" : "runtime") error: \(err)")
+        }
+    }
+
+    // MARK: - M6.1: Test helper (không cần SpriteRenderer)
+
+    /// Mở VM + đăng ký Marshal module + load RPGClasses.rb.
+    /// Dùng cho unit test — tách riêng để test có thể setTestData() giữa
+    /// các lần chạy script (setTestData cần VM đã mở).
+    /// - Returns: true nếu mở thành công, false nếu VM đã chạy hoặc lỗi.
+    @discardableResult
+    func openTestVM() -> Bool {
+        guard mrb == nil else {
+            return false
+        }
+        guard let mrbPtr = mrb_open() else {
+            return false
+        }
+        mrb = mrbPtr
+
+        // Register Marshal module (cần cho test Marshal.load)
+        mrb_define_marshal_module(mrbPtr)
+        // Load RPG::* data classes
+        loadRPGClasses(into: mrbPtr)
+        return true
+    }
+
+    /// Chạy test script trên VM hiện có (nếu đã mở qua openTestVM) hoặc mở
+    /// VM mới nếu chưa. Dùng cho unit test (RPGClassesTests).
+    /// - Returns: (exitCode, errorMessage). exitCode 0 = thành công.
+    @discardableResult
+    func runTestScript(_ script: String) -> (Int, String) {
+        // Nếu VM chưa mở → mở mới (kèm Marshal module + RPGClasses.rb).
+        if mrb == nil {
+            guard openTestVM() else {
+                return (-1, "Không mở được test VM")
+            }
+        }
+        guard let mrbPtr = mrb else {
+            return (-1, "mrb nil sau openTestVM")
+        }
+
+        var cBytes = script.utf8CString
+        let rc = cBytes.withUnsafeBufferPointer { buf in
+            var isSyntax = 0
+            let rc = mrb_bridge_load_nstring(mrbPtr, buf.baseAddress, buf.count - 1, &isSyntax)
+            lastSyntaxFlag = isSyntax != 0
+            return rc
+        }
+
+        if rc == 0 {
+            return (0, "")
+        }
+        let err = String(cString: mrb_bridge_last_error(mrbPtr))
+        return (-1, err)
+    }
+
+    /// Truyền binary data (synthetic Marshal bytes) vào Ruby global $__test_data.
+    /// Dùng cho unit test — script Ruby đọc qua `$__test_data`.
+    func setTestData(_ data: Data) {
+        guard let mrbPtr = mrb else { return }
+        data.withUnsafeBytes { (raw: UnsafeRawBufferPointer) in
+            guard let base = raw.baseAddress else { return }
+            mrb_bridge_set_global_string(
+                mrbPtr,
+                "__test_data",
+                base.assumingMemoryBound(to: CChar.self),
+                data.count
+            )
+        }
+    }
 }

@@ -14,6 +14,7 @@
 #define MRUBY_BRIDGE_H
 
 #include <mruby.h>
+#include <stddef.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -73,6 +74,13 @@ int mrb_bridge_load_nstring(mrb_state *mrb, const char *script, size_t len,
 /// Valid until the next call to either function or mrb_bridge_last_error().
 /// Never returns NULL (returns "" if no error).
 const char *mrb_bridge_last_error(mrb_state *mrb);
+
+/// Set a Ruby global variable to a binary string (may contain NUL bytes).
+/// Used by unit tests to pass synthetic Marshal bytes into a test script:
+///   mrb_bridge_set_global_string(mrb, "__test_data", bytes, len);
+///   # in Ruby:  data = $__test_data
+void mrb_bridge_set_global_string(mrb_state *mrb, const char *name,
+                                  const char *data, size_t len);
 
 #ifdef __cplusplus
 }
