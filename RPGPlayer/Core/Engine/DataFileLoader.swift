@@ -109,8 +109,8 @@ enum DataFileLoader {
         }
 
         // ── Root phải là OBJECT class RPG::Map ──
-        guard let className = rgss_value_object_class_name(loadedRoot),
-              className == "RPG::Map" else {
+        guard let classNamePtr = rgss_value_object_class_name(loadedRoot),
+              String(cString: classNamePtr) == "RPG::Map" else {
             throw DataFileLoaderError.invalidStructure("\(fileName).rvdata2 root phải là RPG::Map")
         }
 
@@ -195,8 +195,8 @@ enum DataFileLoader {
 
         for i in 0..<count {
             guard let tilesetPtr = rgss_value_array_item(loadedRoot, i) else { continue }
-            guard let className = rgss_value_object_class_name(tilesetPtr),
-                  className == "RPG::Tileset" else { continue }
+            guard let classNamePtr = rgss_value_object_class_name(tilesetPtr),
+                  String(cString: classNamePtr) == "RPG::Tileset" else { continue }
 
             var id = 0
             var names: [String] = []
@@ -262,8 +262,8 @@ enum DataFileLoader {
         }
 
         // ── Root phải là OBJECT class RPG::System ──
-        guard let className = rgss_value_object_class_name(loadedRoot),
-              className == "RPG::System" else {
+        guard let classNamePtr = rgss_value_object_class_name(loadedRoot),
+              String(cString: classNamePtr) == "RPG::System" else {
             throw DataFileLoaderError.invalidStructure("System.rvdata2 root phải là RPG::System")
         }
 
