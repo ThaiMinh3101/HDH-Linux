@@ -925,3 +925,64 @@ long long rgss_value_int(const RGSSValue *v) {
     return 0;
   return v->as.i;
 }
+
+const char *rgss_value_symbol_name(const RGSSValue *v) {
+  if (!v || v->type != RGSS_VAL_SYMBOL)
+    return NULL;
+  return v->as.sym;
+}
+
+// ── Object / Hash accessors (M6.3) ────────────────────────────────────────
+// Cho phép Swift đọc RPG::Map / RPG::Tileset / RPG::System từ .rvdata2
+// (dùng cho TilemapRenderer khởi tạo tilemap).
+
+const char *rgss_value_object_class_name(const RGSSValue *v) {
+  if (!v || v->type != RGSS_VAL_OBJECT)
+    return NULL;
+  return v->as.obj.class_name;
+}
+
+size_t rgss_value_object_ivar_count(const RGSSValue *v) {
+  if (!v || v->type != RGSS_VAL_OBJECT)
+    return 0;
+  return v->as.obj.ivars.count;
+}
+
+const RGSSValue *rgss_value_object_ivar_key(const RGSSValue *v, size_t index) {
+  if (!v || v->type != RGSS_VAL_OBJECT)
+    return NULL;
+  if (index >= v->as.obj.ivars.count)
+    return NULL;
+  return v->as.obj.ivars.keys[index];
+}
+
+const RGSSValue *rgss_value_object_ivar_value(const RGSSValue *v,
+                                              size_t index) {
+  if (!v || v->type != RGSS_VAL_OBJECT)
+    return NULL;
+  if (index >= v->as.obj.ivars.count)
+    return NULL;
+  return v->as.obj.ivars.values[index];
+}
+
+size_t rgss_value_hash_count(const RGSSValue *v) {
+  if (!v || v->type != RGSS_VAL_HASH)
+    return 0;
+  return v->as.hash.count;
+}
+
+const RGSSValue *rgss_value_hash_key(const RGSSValue *v, size_t index) {
+  if (!v || v->type != RGSS_VAL_HASH)
+    return NULL;
+  if (index >= v->as.hash.count)
+    return NULL;
+  return v->as.hash.keys[index];
+}
+
+const RGSSValue *rgss_value_hash_value(const RGSSValue *v, size_t index) {
+  if (!v || v->type != RGSS_VAL_HASH)
+    return NULL;
+  if (index >= v->as.hash.count)
+    return NULL;
+  return v->as.hash.values[index];
+}

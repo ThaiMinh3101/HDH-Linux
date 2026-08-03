@@ -27,9 +27,17 @@ final class RGSSViewController: UIViewController {
 
     // MARK: - Private properties
 
-    private var mtkView: MTKView!
-    private var renderer: SpriteRenderer!
-    private var rubyBridge: RubyBridge!
+     private var mtkView: MTKView!
+     private var renderer: SpriteRenderer!
+     private var rubyBridge: RubyBridge!
+     /// M6.3: Tilemap renderer — vẽ map RGSS3 thành MTLTexture.
+     private var tilemapRenderer: TilemapRenderer?
+     /// M6.3: Đã render tilemap chưa (tránh render lại mỗi frame).
+     private var tilemapRendered = false
+     /// M6.3: Đã thử render thất bại chưa — chống spam retry mỗi frame (60fps).
+     /// Nếu game thiếu file .rvdata2 hoặc tileset image → lỗi vĩnh viễn,
+     /// không retry vô hạn (decode 16MB arena mỗi frame = tốn CPU).
+     private var tilemapRenderFailed = false
 
     /// CADisplayLink drives the per-frame input pump.
     /// Full RGSS scene loop (Graphics.update, scene switching) is a future milestone.
@@ -104,14 +112,17 @@ final class RGSSViewController: UIViewController {
         mtkView.enableSetNeedsDisplay    = false   // Continuous render loop
         view.addSubview(mtkView)
 
-        guard let r = SpriteRenderer(device: device) else {
-            showError("Metal renderer could not be initialised.")
-            return false
-        }
-        renderer = r
-        mtkView.delegate = renderer
-        return true
-    }
+         guard let r = SpriteRenderer(device: device) else {
+             showError("Metal renderer could not be initialised.")
+             return false
+         }
+         renderer = r
+         mtkView.delegate = renderer
+
+         // M6.3: Tilemap renderer dùng chung device.
+         tilemapRenderer = TilemapRenderer(device: device)
+         return true
+     }
 
     // MARK: - Virtual D-pad overlay (M2)
 
@@ -213,14 +224,72 @@ final class RGSSViewController: UIViewController {
         )
         rgss_input_update(&cState)
 
-        // M6.2: Advance the mruby scene loop one frame.
-        // Calls `advance_frame` (niladic method on top-level Object) if defined.
-        // Game script / test defines it to update Game_Player/Game_Map per frame.
-        // M6.3 will replace this with a full Graphics.update + scene switching loop.
-        rubyBridge?.advanceFrame()
-    }
+         // M6.2: Advance the mruby scene loop one frame.
+         // Calls `advance_frame` (niladic method on top-level Object) if defined.
+         // Game script / test defines it to update Game_Player/Game_Map per frame.
+         // M6.3 will replace this with a full Graphics.update + scene switching loop.
+         rubyBridge?.advanceFrame()
 
-    // MARK: - Ruby engine
+         // M6.3: Render tilemap một lần sau khi VM đã load xong scripts.
+         // Tilemap render cần gamePath + renderer — chạy trên main thread.
+         if !tilemapRendered, let gamePath = gamePath {
+             renderTilemapIfNeeded(gameRoot: gamePath)
+         }
+     }
+
+     // MARK: - M6.3: Tilemap rendering
+
+     /// Load map + tileset + system từ game sandbox, render tilemap qua
+     /// TilemapRenderer, rồi set texture vào SpriteRenderer.
+     /// Chạy trên main thread (sau khi VM đã load xong scripts).
+     private func renderTilemapIfNeeded(gameRoot: URL) {
+         guard !tilemapRendered, !tilemapRenderFailed,
+               let tilemapRenderer = tilemapRenderer else { return }
+
+         do {
+             // Đọc System.rvdata2 → vị trí khởi đầu
+             let system = try DataFileLoader.loadSystem(fromGameRoot: gameRoot)
+             print("[RGSSViewController] ✅ System: start_map=\(system.startMapID) (\(system.startX),\(system.startY))")
+
+             // Đọc MapXXX.rvdata2
+             let map = try DataFileLoader.loadMap(fromGameRoot: gameRoot, mapID: system.startMapID)
+             print("[RGSSViewController] ✅ Map \(system.startMapID): \(map.width)×\(map.height) tiles, tileset=\(map.tilesetID)")
+
+             // Đọc Tilesets.rvdata2 → tìm tileset theo ID
+             let tilesets = try DataFileLoader.loadTilesets(fromGameRoot: gameRoot)
+             guard let tileset = tilesets.first(where: { $0.id == map.tilesetID }) else {
+                 print("[RGSSViewController] ⚠️  Không tìm thấy tileset ID \(map.tilesetID)")
+                 // Thiếu tileset = lỗi vĩnh viễn (game data thiếu) — không retry
+                 tilemapRenderFailed = true
+                 return
+             }
+             print("[RGSSViewController] ✅ Tileset \(tileset.id): \(tileset.tilesetNames.filter { !$0.isEmpty }.count) images")
+
+             // Render tilemap
+             if tilemapRenderer.render(map: map, tileset: tileset, gameRoot: gameRoot) {
+                 renderer.setTilemapTexture(
+                     tilemapRenderer.tilemapTexture,
+                     mapWidth: map.width,
+                     mapHeight: map.height,
+                     viewSize: mtkView.bounds.size
+                 )
+                 tilemapRendered = true
+             } else {
+                 // Render thất bại (thiếu tileset image, texture decode lỗi) —
+                 // lỗi vĩnh viễn, không retry mỗi frame
+                 tilemapRenderFailed = true
+             }
+         } catch {
+             print("[RGSSViewController] ⚠️  Không render được tilemap: \(error.localizedDescription)")
+             // Không set tilemapRenderFailed = true — cho phép retry lần sau
+             // (có thể game đang được import/không đầy đủ tại thời điểm này).
+             // Lưu ý: retry chỉ chạy mỗi CADisplayLink tick cho tới khi thành
+             // công — decode 16MB arena mỗi frame có thể gây frame drop.
+             // TODO M6.4: đưa renderTilemap lên background thread.
+         }
+     }
+
+     // MARK: - Ruby engine
 
     private func startRubyEngine() {
         guard renderer != nil else { return }

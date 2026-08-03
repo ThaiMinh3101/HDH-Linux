@@ -388,63 +388,78 @@ end
 # Game_Map — quản lý map hiện tại, event, collision
 # ─────────────────────────────────────────────────────────────────────────────
 
-class Game_Map
-  attr_accessor :map_id
-  attr_accessor :width
-  attr_accessor :height
-  attr_accessor :events
-  attr_accessor :tileset
-  attr_accessor :display_x
-  attr_accessor :display_y
+ class Game_Map
+   attr_accessor :map_id
+   attr_accessor :width
+   attr_accessor :height
+   attr_accessor :events
+   attr_accessor :tileset
+   attr_accessor :map_data
+   attr_accessor :display_x
+   attr_accessor :display_y
 
-  # Hằng số flag tileset (RGSS3: bit 0 = impassable, bit 1 = bush, ...)
-  FLAG_IMPASSABLE = 0x01
+   # Hằng số flag tileset (RGSS3: bit 0 = impassable, bit 1 = bush, ...)
+   FLAG_IMPASSABLE = 0x01
 
-  def initialize
-    @map_id = 0
-    @width = 0
-    @height = 0
-    @events = {}
-    @tileset = nil
-    @display_x = 0
-    @display_y = 0
-  end
+   def initialize
+     @map_id = 0
+     @width = 0
+     @height = 0
+     @events = {}
+     @tileset = nil
+     @map_data = nil
+     @display_x = 0
+     @display_y = 0
+   end
 
-  # Setup map từ RPG::Map + RPG::Tileset (bản tối thiểu M6.2).
-  # - map: RPG::Map (đã load từ MapXXX.rvdata2)
-  # - tileset: RPG::Tileset (đã load từ Tilesets.rvdata2)
-  def setup(map, tileset)
-    @map_id = map.id if map.respond_to?(:id)
-    @width = map.width
-    @height = map.height
-    @tileset = tileset
-    @events = {}
-    # Guard: RPG::Map.events có thể nil nếu map chưa được load đầy đủ
-    # (test dùng RPG::Map.new trần). Bản tối thiểu M6.2 — bỏ qua an toàn.
-    events = map.respond_to?(:events) ? map.events : nil
-    if events
-      events.each do |id, event_data|
-        @events[id] = Game_Event.new(event_data)
-      end
-    end
-  end
+   # Setup map từ RPG::Map + RPG::Tileset (bản tối thiểu M6.2).
+   # - map: RPG::Map (đã load từ MapXXX.rvdata2)
+   # - tileset: RPG::Tileset (đã load từ Tilesets.rvdata2)
+   # - map_id: ID map (từ tên file MapXXX.rvdata2 — RGSS3: RPG::Map không
+   #   chứa field id, map_id được truyền từ ngoài runtime)
+   def setup(map, tileset, map_id = 0)
+     @map_id = map_id
+     @width = map.width
+     @height = map.height
+     @tileset = tileset
+     # M6.3: Lưu RPG::Map.data (Table 3D [width][height][4]) — dùng cho
+     # passable? và tilemap rendering. Guard: map.data có thể nil nếu map
+     # chưa được load đầy đủ (test dùng RPG::Map.new trần).
+     @map_data = map.respond_to?(:data) ? map.data : nil
+     @events = {}
+     # Guard: RPG::Map.events có thể nil nếu map chưa được load đầy đủ
+     # (test dùng RPG::Map.new trần). Bản tối thiểu M6.2 — bỏ qua an toàn.
+     events = map.respond_to?(:events) ? map.events : nil
+     if events
+       events.each do |id, event_data|
+         @events[id] = Game_Event.new(event_data)
+       end
+     end
+   end
 
-  # Kiểm tra tile (x, y) có nằm trong map không
-  def valid?(x, y)
-    x >= 0 && x < @width && y >= 0 && y < @height
-  end
+   # Kiểm tra tile (x, y) có nằm trong map không
+   def valid?(x, y)
+     x >= 0 && x < @width && y >= 0 && y < @height
+   end
 
-  # Kiểm tra có thể đi qua tile (x, y) — dựa trên tileset flags.
-  # Bản tối thiểu: nếu không có tileset → cho đi qua (map trống test).
-  def passable?(x, y)
-    return false unless valid?(x, y)
-    return true unless @tileset
+   # Kiểm tra có thể đi qua tile (x, y) — dựa trên tileset flags.
+   # M6.3: đọc RPG::Map.data (Table 3D) qua class Table — duyệt 4 layer
+   # từ dưới lên, tile đầu tiên khác 0 quyết định passable.
+   #   - Tile ID 0 (trống) → tiếp tục layer trên
+   #   - Tile ID != 0 → check tileset.flags[tile_id] & FLAG_IMPASSABLE
+   # Nếu không có tileset hoặc map_data → cho đi qua (map trống test).
+   def passable?(x, y)
+     return false unless valid?(x, y)
+     return true unless @tileset && @map_data
 
-    # Lấy tile id tại (x, y) từ map data (layer 0 — ground).
-    # Bản tối thiểu: chưa đọc RPG::Map.data (Table) — trả true.
-    # TODO M6.3: đọc data Table qua binding Table để lấy tile id thật.
-    true
-  end
+     (0..3).each do |layer|
+       tile_id = @map_data[x, y, layer]
+       next if tile_id == 0
+       flag = @tileset.flags[tile_id]
+       return false if flag & FLAG_IMPASSABLE != 0
+     end
+     true
+   end
 
   # Có event tại (x, y) không (dùng cho va chạm player)
   def event_at?(x, y)

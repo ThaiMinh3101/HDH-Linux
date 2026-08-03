@@ -181,12 +181,45 @@ final class SpriteRenderer: NSObject, MTKViewDelegate {
     ///   - width:  NDC width  (2 = full screen width).
     ///   - height: NDC height (2 = full screen height).
     ///
-    /// M6.2: called from Ruby (Game_Player movement) to move the player sprite.
-    /// Thread: main thread (called from advanceFrame via CADisplayLink).
-    func setSpritePosition(x: Float, y: Float, width: Float, height: Float) {
-        spritePosition = SIMD2<Float>(x, y)
-        spriteSize     = SIMD2<Float>(width, height)
-    }
+     /// M6.2: called from Ruby (Game_Player movement) to move the player sprite.
+     /// Thread: main thread (called from advanceFrame via CADisplayLink).
+     func setSpritePosition(x: Float, y: Float, width: Float, height: Float) {
+         spritePosition = SIMD2<Float>(x, y)
+         spriteSize     = SIMD2<Float>(width, height)
+     }
+
+     /// M6.3: Set the tilemap texture and fit it to the view (letterbox).
+     /// The map is scaled to fit within the view while preserving aspect ratio.
+     /// - Parameters:
+     ///   - texture: The tilemap MTLTexture (from TilemapRenderer).
+     ///   - mapWidth: Map width in tiles.
+     ///   - mapHeight: Map height in tiles.
+     ///   - viewSize: Current MTKView size in points.
+     func setTilemapTexture(_ texture: MTLTexture?, mapWidth: Int, mapHeight: Int, viewSize: CGSize) {
+         currentTexture = texture
+         guard texture != nil, mapWidth > 0, mapHeight > 0, viewSize.width > 0, viewSize.height > 0 else {
+             // Fallback: full-screen (M1b behaviour)
+             spritePosition = SIMD2<Float>(0, 0)
+             spriteSize     = SIMD2<Float>(2, 2)
+             return
+         }
+
+         // Map pixel size (32px per tile)
+         let mapPixelW = CGFloat(mapWidth) * 32
+         let mapPixelH = CGFloat(mapHeight) * 32
+
+         // Scale to fit view while preserving aspect ratio (letterbox)
+         let scale = min(viewSize.width / mapPixelW, viewSize.height / mapPixelH)
+         let scaledW = mapPixelW * scale
+         let scaledH = mapPixelH * scale
+
+         // Convert to NDC: 2.0 = full screen dimension
+         let ndcW = Float(scaledW / viewSize.width) * 2.0
+         let ndcH = Float(scaledH / viewSize.height) * 2.0
+
+         spritePosition = SIMD2<Float>(0, 0)
+         spriteSize     = SIMD2<Float>(ndcW, ndcH)
+     }
 
     /// Procedural 64×64 checkerboard placeholder texture.
     /// M4: Used whenever an image fails to load — warm orange / dark teal palette.

@@ -174,11 +174,12 @@ final class GameClassesTests: XCTestCase {
     func testMapSetupCreatesEvents() {
         let bridge = makeBridge()
         let script = """
-        # Tạo RPG::Map synthetic
-        m = RPG::Map.new
-        m.id = 1
-        m.width = 20
-        m.height = 15
+         # Tạo RPG::Map synthetic
+         # Lưu ý: RPG::Map KHÔNG có field id (RGSS3 clean-room) — map_id
+         # được truyền từ ngoài runtime qua setup(map, tileset, map_id).
+         m = RPG::Map.new
+         m.width = 20
+         m.height = 15
 
         # Tạo 2 RPG::Event
         e1 = RPG::Event.new
@@ -195,9 +196,9 @@ final class GameClassesTests: XCTestCase {
 
         m.events = { 1 => e1, 2 => e2 }
 
-        # Setup Game_Map
-        gm = Game_Map.new
-        gm.setup(m, nil)   # không tileset → passable? trả true
+         # Setup Game_Map (map_id = 1 truyền từ ngoài — từ tên file Map001.rvdata2)
+         gm = Game_Map.new
+         gm.setup(m, nil, 1)   # không tileset → passable? trả true
 
         raise "map_id sai" unless gm.map_id == 1
         raise "width sai" unless gm.width == 20

@@ -115,11 +115,18 @@ final class RubyBridge {
         mrb_define_marshal_module(mrbPtr)
         print("[RubyBridge] ✅ RGSS modules registered: Marshal")
 
-        // ---------------------------------------------------------------------------
-        // M6.1: Load RPG::* data classes (RPGClasses.rb) from bundle.
-        // Cần thiết để Marshal.load các file .rvdata2 thật.
-        // ---------------------------------------------------------------------------
-        loadRPGClasses(into: mrbPtr)
+         // ---------------------------------------------------------------------------
+         // M6.3: Load RGSS built-in classes (RGSSBuiltins.rb) from bundle.
+         // Table cần cho Marshal.load RPG::Map.data / RPG::Tileset.flags.
+         // Load TRƯỚC RPGClasses.rb (RPG::Map.data là Table object).
+         // ---------------------------------------------------------------------------
+         loadRGSSBuiltins(into: mrbPtr)
+
+         // ---------------------------------------------------------------------------
+         // M6.1: Load RPG::* data classes (RPGClasses.rb) from bundle.
+         // Cần thiết để Marshal.load các file .rvdata2 thật.
+         // ---------------------------------------------------------------------------
+         loadRPGClasses(into: mrbPtr)
 
         // ---------------------------------------------------------------------------
         // M6.2: Load Game_* runtime classes (GameClasses.rb) from bundle.
@@ -190,7 +197,38 @@ final class RubyBridge {
     /// Set ngay trong C callback, đọc ngay sau khi gọi.
     private var lastSyntaxFlag = false
 
-    // MARK: - M6.1: RPG::* data classes
+     // MARK: - M6.3: RGSS built-in classes
+
+     /// Load RGSSBuiltins.rb (định nghĩa RGSS built-in classes: Table) từ
+     /// bundle vào VM. File nằm trong Resources/ → được copy vào bundle root.
+     /// Dùng Bundle(for:) thay vì Bundle.main (giống loadRPGClasses — trong
+     /// unit test Bundle.main trỏ tới test bundle không có file).
+     /// Nếu không tìm thấy hoặc lỗi cú pháp → log ⚠️ (không dừng VM — game
+     /// script vẫn có thể chạy, chỉ là Marshal.load object Table sẽ trả nil).
+     private func loadRGSSBuiltins(into mrbPtr: UnsafeMutablePointer<mrb_state>) {
+         guard let url = Bundle(for: RubyBridge.self).url(forResource: "RGSSBuiltins", withExtension: "rb"),
+               let source = try? String(contentsOf: url, encoding: .utf8) else {
+             print("[RubyBridge] ⚠️  Không tìm thấy RGSSBuiltins.rb trong bundle")
+             return
+         }
+
+         var cBytes = source.utf8CString
+         let rc = cBytes.withUnsafeBufferPointer { buf in
+             var isSyntax = 0
+             let rc = mrb_bridge_load_nstring(mrbPtr, buf.baseAddress, buf.count - 1, &isSyntax)
+             lastSyntaxFlag = isSyntax != 0
+             return rc
+         }
+
+         if rc == 0 {
+             print("[RubyBridge] ✅ RGSS built-in classes loaded (RGSSBuiltins.rb)")
+         } else {
+             let err = String(cString: mrb_bridge_last_error(mrbPtr))
+             print("[RubyBridge] ⚠️  RGSSBuiltins.rb load \(lastSyntaxFlag ? "SYNTAX" : "runtime") error: \(err)")
+         }
+     }
+
+     // MARK: - M6.1: RPG::* data classes
 
     /// Load RPGClasses.rb (định nghĩa RPG::* data classes) từ bundle vào VM.
     /// File nằm trong Resources/ → được copy vào bundle root.
@@ -302,13 +340,15 @@ final class RubyBridge {
         }
         mrb = mrbPtr
 
-        // Register Marshal module (cần cho test Marshal.load)
-        mrb_define_marshal_module(mrbPtr)
-        // Load RPG::* data classes
-        loadRPGClasses(into: mrbPtr)
-        // Load Game_* runtime classes (M6.2)
-        loadGameClasses(into: mrbPtr)
-        return true
+         // Register Marshal module (cần cho test Marshal.load)
+         mrb_define_marshal_module(mrbPtr)
+         // Load RGSS built-in classes (M6.3: Table)
+         loadRGSSBuiltins(into: mrbPtr)
+         // Load RPG::* data classes
+         loadRPGClasses(into: mrbPtr)
+         // Load Game_* runtime classes (M6.2)
+         loadGameClasses(into: mrbPtr)
+         return true
     }
 
     /// Chạy test script trên VM hiện có (nếu đã mở qua openTestVM) hoặc mở

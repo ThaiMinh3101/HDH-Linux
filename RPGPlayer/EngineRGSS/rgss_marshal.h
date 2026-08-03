@@ -194,4 +194,32 @@ size_t rgss_value_string_len(const RGSSValue *v);
 // Integer access.
 long long rgss_value_int(const RGSSValue *v);
 
+// Symbol access (M6.3): symbol name as C string (null-terminated).
+// Returns NULL if v is not a SYMBOL.
+const char *rgss_value_symbol_name(const RGSSValue *v);
+
+// Object access (M6.3): class names + ivars for reading .rvdata2 data files.
+// Return the class name of an OBJECT value (e.g. "RPG::Map", "RPG::Tileset").
+// Returns NULL if v is not an OBJECT.
+const char *rgss_value_object_class_name(const RGSSValue *v);
+
+// Number of instance variables on an OBJECT value.
+size_t rgss_value_object_ivar_count(const RGSSValue *v);
+
+// The i-th ivar key (a SYMBOL value) or NULL if out of range / not OBJECT.
+const RGSSValue *rgss_value_object_ivar_key(const RGSSValue *v, size_t index);
+
+// The i-th ivar value (any type) or NULL if out of range / not OBJECT.
+const RGSSValue *rgss_value_object_ivar_value(const RGSSValue *v, size_t index);
+
+// Hash access (M6.3): RPG::Map.events is a Hash keyed by Integer event id.
+// Count of key/value pairs in a HASH value.
+size_t rgss_value_hash_count(const RGSSValue *v);
+
+// The i-th hash key (any type) or NULL if out of range / not HASH.
+const RGSSValue *rgss_value_hash_key(const RGSSValue *v, size_t index);
+
+// The i-th hash value (any type) or NULL if out of range / not HASH.
+const RGSSValue *rgss_value_hash_value(const RGSSValue *v, size_t index);
+
 #endif /* RGSS_MARSHAL_H */
