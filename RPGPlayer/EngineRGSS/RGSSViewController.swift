@@ -41,6 +41,9 @@ final class RGSSViewController: UIViewController {
     /// Observation token for gamepad connection changes.
     private var gamepadCancellable: AnyCancellable?
 
+    /// Exit button overlay (always visible, not gated by gamepad)
+    private var exitHostVC: UIHostingController<ExitButtonView>?
+
     /// M5: Translation overlay — same subtitle-strip UI as GamePlayerViewController.
     private var translationOverlay: TranslationOverlayHostingController?
 
@@ -59,6 +62,7 @@ final class RGSSViewController: UIViewController {
         setupDpadOverlay()
         startDisplayLink()
         startRubyEngine()
+        setupExitButton()         // Exit button — top-left, always visible
         // M5: Translation overlay setup
         // gamePath is set by the presenter before viewDidLoad if launching via LibraryStore.
         if let entry = gameEntryForTranslation {
@@ -131,6 +135,27 @@ final class RGSSViewController: UIViewController {
             .sink { connected in
                 print("[RGSSViewController] Gamepad connected: \(connected) → D-pad overlay \(connected ? "hidden" : "visible")")
             }
+    }
+
+    // MARK: - Exit button
+
+    private func setupExitButton() {
+        let exitView = ExitButtonView {
+            if let nav = self.navigationController {
+                nav.popViewController(animated: true)
+            } else {
+                self.dismiss(animated: true)
+            }
+        }
+        let hostVC = UIHostingController(rootView: exitView)
+        hostVC.view.backgroundColor = .clear
+        hostVC.view.isUserInteractionEnabled = true
+        addChild(hostVC)
+        hostVC.view.frame = view.bounds
+        hostVC.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        view.addSubview(hostVC.view)
+        hostVC.didMove(toParent: self)
+        exitHostVC = hostVC
     }
 
     // MARK: - Translation overlay (M5)

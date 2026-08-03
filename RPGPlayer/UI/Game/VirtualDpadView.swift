@@ -8,11 +8,14 @@
 //                         to show/hide; hosts VirtualDpadHostView via UIViewRepresentable.
 //   VirtualDpadHostView — UIView subclass; uses raw UITouch tracking for
 //                         minimum latency; writes to GamepadManager.shared.touchInput.
+//   ExitButtonView      — SwiftUI View; always visible top-left; dismiss with confirm.
 //
-// Layout (landscape, Q1 approved):
+// Layout (landscape):
 //   Bottom-left:  Digital D-pad cross (four triangular touch zones)
-//   Bottom-right: A (confirm) and B (cancel) round buttons
+//   Bottom-right: 4-button diamond  Y(top) X(left) B(bottom) A(right)
+//                 — matching standard gamepad face-button layout
 //   Top-center:   START and SELECT pill buttons
+//   Top-left:     Exit button (shown separately via setupExitButton, not gated by gamepad)
 
 import SwiftUI
 import UIKit
@@ -43,11 +46,56 @@ private struct VirtualDpadRepresentable: UIViewRepresentable {
         let v = VirtualDpadHostView()
         v.backgroundColor = .clear
         v.isUserInteractionEnabled = true
-        // Allow simultaneous multi-touch (D-pad + buttons at same time)
         v.isMultipleTouchEnabled = true
         return v
     }
     func updateUIView(_ uiView: VirtualDpadHostView, context: Context) {}
+}
+
+// MARK: - ExitButtonView
+
+/// Floating exit button placed top-left. Always visible over the game viewport
+/// (not hidden when a physical gamepad is connected).
+/// Used by both GamePlayerViewController and RGSSViewController.
+struct ExitButtonView: View {
+
+    /// Called when the user confirms they want to quit.
+    var onExit: () -> Void
+
+    @State private var showConfirm = false
+
+    var body: some View {
+        VStack {
+            HStack {
+                Button {
+                    showConfirm = true
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 28, weight: .semibold))
+                        .foregroundStyle(.white.opacity(0.80), .black.opacity(0.45))
+                        .shadow(color: .black.opacity(0.5), radius: 4, x: 0, y: 2)
+                }
+                .buttonStyle(.plain)
+                .padding(.leading, 18)
+                .padding(.top, 14)
+                .confirmationDialog(
+                    "Thoát game?",
+                    isPresented: $showConfirm,
+                    titleVisibility: .visible
+                ) {
+                    Button("Thoát", role: .destructive) { onExit() }
+                    Button("Huỷ",   role: .cancel)      {}
+                } message: {
+                    Text("Tiến trình chưa lưu có thể mất.")
+                }
+
+                Spacer()
+            }
+            Spacer()
+        }
+        .ignoresSafeArea()
+        .allowsHitTesting(true)
+    }
 }
 
 // MARK: - VirtualDpadHostView
@@ -56,18 +104,18 @@ private struct VirtualDpadRepresentable: UIViewRepresentable {
 /// InputState updates written to GamepadManager.shared.touchInput.
 ///
 /// Touch zones (all in landscape coordinate space):
-///   D-pad   — bottom-left area, angle from center determines direction
-///   A/B     — bottom-right area, two circles
-///   Start   — top-center, small pill button
-///   Select  — top-center, small pill button (to the left of Start)
+///   D-pad     — bottom-left area, angle from center determines direction
+///   A/B/X/Y   — bottom-right diamond: Y(top) X(left) B(bottom) A(right)
+///   Start     — top-center, small pill button
+///   Select    — top-center, small pill button (to the left of Start)
 final class VirtualDpadHostView: UIView {
 
     // MARK: - Layout constants (points)
     private enum Layout {
         static let dpadRadius:    CGFloat = 52   // Outer radius of entire D-pad
         static let dpadDeadZone:  CGFloat = 14   // Ignore touches within this radius from center
-        static let buttonRadius:  CGFloat = 28   // A / B button radius
-        static let buttonSpacing: CGFloat = 14   // Gap between A and B
+        static let buttonRadius:  CGFloat = 26   // Face button radius
+        static let buttonSpacing: CGFloat = 10   // Edge-to-edge gap between adjacent diamond buttons
         static let edgePadding:   CGFloat = 24   // Margin from screen edges
         static let menuHeight:    CGFloat = 28
         static let menuWidth:     CGFloat = 64
@@ -76,24 +124,28 @@ final class VirtualDpadHostView: UIView {
     }
 
     // MARK: - Colors
-    private let dpadColor      = UIColor(white: 1, alpha: 0.18)
-    private let dpadBorderColor = UIColor(white: 1, alpha: 0.35)
-    private let buttonAColor   = UIColor(red: 0.25, green: 0.72, blue: 0.35, alpha: 0.55)
-    private let buttonBColor   = UIColor(red: 0.90, green: 0.28, blue: 0.28, alpha: 0.55)
-    private let menuColor      = UIColor(white: 1, alpha: 0.22)
-    private let labelColor     = UIColor.white
+    private let dpadColor       = UIColor(white: 1, alpha: 0.18)
+    // PlayStation-style face button colors
+    private let buttonAColor    = UIColor(red: 0.25, green: 0.72, blue: 0.35, alpha: 0.55)  // A green  (South)
+    private let buttonBColor    = UIColor(red: 0.90, green: 0.28, blue: 0.28, alpha: 0.55)  // B red    (East)
+    private let buttonXColor    = UIColor(red: 0.25, green: 0.55, blue: 0.90, alpha: 0.55)  // X blue   (West)
+    private let buttonYColor    = UIColor(red: 0.88, green: 0.68, blue: 0.12, alpha: 0.55)  // Y yellow (North)
+    private let menuColor       = UIColor(white: 1, alpha: 0.22)
+    private let labelColor      = UIColor.white
 
     // MARK: - Computed centers (recalculated on layout)
-    private var dpadCenter  = CGPoint.zero
-    private var centerA     = CGPoint.zero
-    private var centerB     = CGPoint.zero
-    private var centerStart  = CGPoint.zero
-    private var centerSelect = CGPoint.zero
+    private var dpadCenter    = CGPoint.zero
+    private var diamondCenter = CGPoint.zero   // geometric centre of 4 face buttons
+    // Diamond positions: A=right, B=bottom, X=left, Y=top
+    private var centerA       = CGPoint.zero   // South — buttonA  (RGSS C / confirm)
+    private var centerB       = CGPoint.zero   // East  — buttonB  (RGSS B / cancel)
+    private var centerX       = CGPoint.zero   // West  — buttonC  (RGSS A / shift)
+    private var centerY       = CGPoint.zero   // North — buttonD  (RGSS X)
+    private var centerStart   = CGPoint.zero
+    private var centerSelect  = CGPoint.zero
 
     // MARK: - Active touch tracking
-    // Each UITouch is assigned to a "zone" when it begins; the zone is fixed
-    // for that touch until it ends, so dragging out of zone doesn't cause glitches.
-    private enum Zone { case dpad, buttonA, buttonB, start, select }
+    private enum Zone { case dpad, buttonA, buttonB, buttonX, buttonY, start, select }
     private var touchZones = [UITouch: Zone]()
 
     // MARK: - Init
@@ -118,24 +170,33 @@ final class VirtualDpadHostView: UIView {
         let w = bounds.width
         let h = bounds.height
         let p = Layout.edgePadding
+        let r = Layout.buttonRadius
 
         // D-pad: bottom-left
         dpadCenter = CGPoint(x: p + Layout.dpadRadius, y: h - p - Layout.dpadRadius)
 
-        // B (cancel) button: bottom-right, slightly inward
-        let br = Layout.buttonRadius
-        let bs = Layout.buttonSpacing
-        let bx = w - p - br
-        let by = h - p - br
-        centerB = CGPoint(x: bx, y: by)
-        centerA = CGPoint(x: bx - bs - br * 2, y: by - br - bs / 2)
+        // Diamond step = center-to-center distance between adjacent buttons
+        let step = r * 2 + Layout.buttonSpacing
+
+        // Place diamond so B (bottom) sits at bottom-right corner, same bottom-margin as D-pad
+        // Diamond center is step/2 above B center, and step/2 to the left of A center
+        let bCenterX = w - p - r                // A is at right edge; B is directly below diamond center
+        let bCenterY = h - p - r                // bottom-most button baseline
+        diamondCenter = CGPoint(x: bCenterX - step / 2, y: bCenterY - step / 2)
+
+        centerB = CGPoint(x: diamondCenter.x,             y: diamondCenter.y + step / 2)  // bottom
+        centerA = CGPoint(x: diamondCenter.x + step / 2,  y: diamondCenter.y)             // right
+        centerX = CGPoint(x: diamondCenter.x - step / 2,  y: diamondCenter.y)             // left
+        centerY = CGPoint(x: diamondCenter.x,             y: diamondCenter.y - step / 2)  // top
 
         // START and SELECT: top-center
         let menuY:  CGFloat = p + Layout.menuHeight / 2
         let totalW: CGFloat = Layout.menuWidth * 2 + Layout.menuSpacing
         let menuX:  CGFloat = (w - totalW) / 2
-        centerSelect = CGPoint(x: menuX + Layout.menuWidth / 2,          y: menuY)
-        centerStart  = CGPoint(x: menuX + Layout.menuWidth + Layout.menuSpacing + Layout.menuWidth / 2, y: menuY)
+        centerSelect = CGPoint(x: menuX + Layout.menuWidth / 2,
+                               y: menuY)
+        centerStart  = CGPoint(x: menuX + Layout.menuWidth + Layout.menuSpacing + Layout.menuWidth / 2,
+                               y: menuY)
     }
 
     // MARK: - Drawing
@@ -146,10 +207,11 @@ final class VirtualDpadHostView: UIView {
         ctx.setAlpha(Layout.alpha)
 
         drawDpad(ctx)
-        drawRoundButton(ctx, center: centerA, radius: Layout.buttonRadius,
-                        color: buttonAColor, label: "A")
-        drawRoundButton(ctx, center: centerB, radius: Layout.buttonRadius,
-                        color: buttonBColor, label: "B")
+        // Diamond face buttons
+        drawRoundButton(ctx, center: centerY, radius: Layout.buttonRadius, color: buttonYColor, label: "Y")
+        drawRoundButton(ctx, center: centerX, radius: Layout.buttonRadius, color: buttonXColor, label: "X")
+        drawRoundButton(ctx, center: centerB, radius: Layout.buttonRadius, color: buttonBColor, label: "B")
+        drawRoundButton(ctx, center: centerA, radius: Layout.buttonRadius, color: buttonAColor, label: "A")
         drawMenuButton(ctx, center: centerSelect, label: "SELECT")
         drawMenuButton(ctx, center: centerStart,  label: "START")
 
@@ -159,34 +221,27 @@ final class VirtualDpadHostView: UIView {
     private func drawDpad(_ ctx: CGContext) {
         let c  = dpadCenter
         let r  = Layout.dpadRadius
-        let arm: CGFloat = r * 0.42   // Width of each arm
+        let arm: CGFloat = r * 0.42
 
-        // Draw a cross shape
-        let crossRect = CGRect(x: c.x - arm, y: c.y - r, width: arm * 2, height: r * 2)
-        let crossRect2 = CGRect(x: c.x - r, y: c.y - arm, width: r * 2, height: arm * 2)
-
+        let crossRect  = CGRect(x: c.x - arm, y: c.y - r,   width: arm * 2, height: r * 2)
+        let crossRect2 = CGRect(x: c.x - r,   y: c.y - arm, width: r * 2,   height: arm * 2)
         ctx.setFillColor(dpadColor.cgColor)
         ctx.fill(crossRect)
         ctx.fill(crossRect2)
 
-        // Arrow indicators (simple filled triangles)
         ctx.setFillColor(UIColor(white: 1, alpha: 0.6).cgColor)
-        let arrowSize: CGFloat = 10
+        let arrowSize: CGFloat  = 10
         let arrowInset: CGFloat = r * 0.55
 
-        // Up arrow
         drawTriangle(ctx, tip: CGPoint(x: c.x, y: c.y - arrowInset),
                      base1: CGPoint(x: c.x - arrowSize/2, y: c.y - arrowInset + arrowSize),
                      base2: CGPoint(x: c.x + arrowSize/2, y: c.y - arrowInset + arrowSize))
-        // Down arrow
         drawTriangle(ctx, tip: CGPoint(x: c.x, y: c.y + arrowInset),
                      base1: CGPoint(x: c.x - arrowSize/2, y: c.y + arrowInset - arrowSize),
                      base2: CGPoint(x: c.x + arrowSize/2, y: c.y + arrowInset - arrowSize))
-        // Left arrow
         drawTriangle(ctx, tip: CGPoint(x: c.x - arrowInset, y: c.y),
                      base1: CGPoint(x: c.x - arrowInset + arrowSize, y: c.y - arrowSize/2),
                      base2: CGPoint(x: c.x - arrowInset + arrowSize, y: c.y + arrowSize/2))
-        // Right arrow
         drawTriangle(ctx, tip: CGPoint(x: c.x + arrowInset, y: c.y),
                      base1: CGPoint(x: c.x + arrowInset - arrowSize, y: c.y - arrowSize/2),
                      base2: CGPoint(x: c.x + arrowInset - arrowSize, y: c.y + arrowSize/2))
@@ -208,12 +263,11 @@ final class VirtualDpadHostView: UIView {
         ctx.setFillColor(color.cgColor)
         ctx.fillEllipse(in: r)
 
-        // Label
         let attrs: [NSAttributedString.Key: Any] = [
-            .font: UIFont.systemFont(ofSize: 16, weight: .bold),
+            .font: UIFont.systemFont(ofSize: 15, weight: .bold),
             .foregroundColor: labelColor
         ]
-        let str = NSAttributedString(string: label, attributes: attrs)
+        let str  = NSAttributedString(string: label, attributes: attrs)
         let size = str.size()
         str.draw(at: CGPoint(x: center.x - size.width/2, y: center.y - size.height/2))
     }
@@ -231,7 +285,7 @@ final class VirtualDpadHostView: UIView {
             .font: UIFont.systemFont(ofSize: 10, weight: .semibold),
             .foregroundColor: labelColor
         ]
-        let str = NSAttributedString(string: label, attributes: attrs)
+        let str  = NSAttributedString(string: label, attributes: attrs)
         let size = str.size()
         str.draw(at: CGPoint(x: center.x - size.width/2, y: center.y - size.height/2))
     }
@@ -241,24 +295,18 @@ final class VirtualDpadHostView: UIView {
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
         for touch in touches {
             let pt = touch.location(in: self)
-            if let zone = zone(for: pt) {
-                touchZones[touch] = zone
-            }
+            if let zone = zone(for: pt) { touchZones[touch] = zone }
         }
         commitTouchState()
     }
 
     override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
-        // Re-evaluate D-pad touches as finger slides; action/menu zones are sticky.
         for touch in touches {
             let pt = touch.location(in: self)
             if let existing = touchZones[touch], existing == .dpad {
-                // Re-map within D-pad zone
-                _ = pt  // direction is computed from center in commitTouchState
+                _ = pt  // direction computed from center in commitTouchState
             } else if touchZones[touch] == nil {
-                if let zone = zone(for: pt) {
-                    touchZones[touch] = zone
-                }
+                if let zone = zone(for: pt) { touchZones[touch] = zone }
             }
         }
         commitTouchState()
@@ -276,17 +324,16 @@ final class VirtualDpadHostView: UIView {
 
     // MARK: - Zone classification
 
-    /// Determine which zone a touch point belongs to, or nil if outside all zones.
     private func zone(for pt: CGPoint) -> Zone? {
-        // D-pad: within outer radius from dpadCenter
         let dpadDist = hypot(pt.x - dpadCenter.x, pt.y - dpadCenter.y)
         if dpadDist <= Layout.dpadRadius { return .dpad }
 
-        // Action buttons
-        if hypot(pt.x - centerA.x, pt.y - centerA.y) <= Layout.buttonRadius { return .buttonA }
-        if hypot(pt.x - centerB.x, pt.y - centerB.y) <= Layout.buttonRadius { return .buttonB }
+        let r = Layout.buttonRadius
+        if hypot(pt.x - centerA.x, pt.y - centerA.y) <= r { return .buttonA }
+        if hypot(pt.x - centerB.x, pt.y - centerB.y) <= r { return .buttonB }
+        if hypot(pt.x - centerX.x, pt.y - centerX.y) <= r { return .buttonX }
+        if hypot(pt.x - centerY.x, pt.y - centerY.y) <= r { return .buttonY }
 
-        // Menu pills (rectangular hit-test)
         let mw = Layout.menuWidth / 2
         let mh = Layout.menuHeight / 2
         if abs(pt.x - centerStart.x)  <= mw && abs(pt.y - centerStart.y)  <= mh { return .start }
@@ -297,7 +344,6 @@ final class VirtualDpadHostView: UIView {
 
     // MARK: - State commit
 
-    /// Rebuild InputState from current active touches and push to GamepadManager.
     private func commitTouchState() {
         var state = InputState.neutral
 
@@ -308,33 +354,27 @@ final class VirtualDpadHostView: UIView {
                 applyDpad(pt: pt, to: &state)
             case .buttonA:  state.buttonA = true
             case .buttonB:  state.buttonB = true
+            case .buttonX:  state.buttonC = true   // West → RGSS A (shift-like)
+            case .buttonY:  state.buttonD = true   // North → RGSS X
             case .start:    state.start   = true
             case .select:   state.select  = true
             }
         }
 
-        // Write to GamepadManager on main thread (we're already here via UIResponder).
         GamepadManager.shared.touchInput = state
     }
 
-    /// Convert a D-pad touch position to directional buttons using angle from center.
-    /// Dead-zone in the center prevents accidental input.
     private func applyDpad(pt: CGPoint, to state: inout InputState) {
-        let dx = pt.x - dpadCenter.x
-        let dy = pt.y - dpadCenter.y
+        let dx   = pt.x - dpadCenter.x
+        let dy   = pt.y - dpadCenter.y
         let dist = hypot(dx, dy)
         guard dist > Layout.dpadDeadZone else { return }
 
-        let angle = atan2(dy, dx)   // radians; +x=right, +y=down (UIKit coords)
+        let angle = atan2(dy, dx)
         let pi    = CGFloat.pi
 
-        // Divide into 4 quadrants with ±45° diagonals allowed.
-        // Right: -45° to +45°   (angle in -π/4 … π/4)
-        // Down:  +45° to +135°  (angle in π/4 … 3π/4)
-        // Left: ±135° to ±180°  (|angle| > 3π/4)
-        // Up:   -135° to -45°   (angle in -3π/4 … -π/4)
-        if angle >= -pi/4  && angle <= pi/4  { state.dpadRight = true }
-        if angle >   pi/4  && angle <  3*pi/4 { state.dpadDown  = true }
+        if angle >= -pi/4   && angle <= pi/4  { state.dpadRight = true }
+        if angle >   pi/4   && angle <  3*pi/4 { state.dpadDown  = true }
         if angle >= -3*pi/4 && angle <= -pi/4 { state.dpadUp    = true }
         if abs(angle) > 3*pi/4                { state.dpadLeft  = true }
     }

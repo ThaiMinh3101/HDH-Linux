@@ -29,6 +29,8 @@ final class GamePlayerViewController: UIViewController {
     /// Hosting controller for the SwiftUI VirtualDpadView overlay.
     private var dpadHostingController: UIHostingController<VirtualDpadView>?
     private var gamepadCancellable: AnyCancellable?
+    /// Exit button overlay (always visible, not gated by gamepad)
+    private var exitHostVC: UIHostingController<ExitButtonView>?
 
     // M5: Translation overlay
     private var translationOverlay: TranslationOverlayHostingController?
@@ -52,9 +54,10 @@ final class GamePlayerViewController: UIViewController {
         launchWallTime = Date()
         buildWebView()
         loadGame()
-        setupDpadOverlay()       // M2: virtual D-pad on top of WKWebView
-        startDisplayLink()       // M2: 60fps input push to GamepadBridge.js
+        setupDpadOverlay()        // M2: virtual D-pad on top of WKWebView
+        startDisplayLink()        // M2: 60fps input push to GamepadBridge.js
         setupTranslationOverlay() // M5: subtitle translation overlay
+        setupExitButton()         // Exit button — top-left, always visible
     }
 
     override func viewWillAppear(_ animated: Bool) {
@@ -212,6 +215,29 @@ final class GamePlayerViewController: UIViewController {
             .sink { connected in
                 print("[GamePlayer] Gamepad \(connected ? "connected" : "disconnected") — D-pad overlay \(connected ? "hidden" : "visible")")
             }
+    }
+
+    // MARK: - Exit button
+
+    private func setupExitButton() {
+        let exitView = ExitButtonView {
+            // Dismiss back to LibraryView (pop or dismiss depending on presentation)
+            if let nav = self.navigationController {
+                nav.popViewController(animated: true)
+            } else {
+                self.dismiss(animated: true)
+            }
+        }
+        let hostVC = UIHostingController(rootView: exitView)
+        hostVC.view.backgroundColor = .clear
+        hostVC.view.isUserInteractionEnabled = true
+        addChild(hostVC)
+        hostVC.view.frame = view.bounds
+        hostVC.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        // Add above everything else so the button is always tappable
+        view.addSubview(hostVC.view)
+        hostVC.didMove(toParent: self)
+        exitHostVC = hostVC
     }
 
     // MARK: - M5: Translation overlay

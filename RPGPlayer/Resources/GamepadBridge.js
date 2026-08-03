@@ -160,9 +160,10 @@
         dpadDown:  { code: 'ArrowDown',  keyCode: 40 },
         dpadLeft:  { code: 'ArrowLeft',  keyCode: 37 },
         dpadRight: { code: 'ArrowRight', keyCode: 39 },
-        buttonA:   { code: 'Enter',      keyCode: 13 },   // Confirm
-        buttonB:   { code: 'Escape',     keyCode: 27 },   // Cancel
-        buttonC:   { code: 'ShiftLeft',  keyCode: 16 },   // Shift
+        buttonA:   { code: 'Enter',      keyCode: 13 },   // Confirm (RGSS C)
+        buttonB:   { code: 'Escape',     keyCode: 27 },   // Cancel  (RGSS B)
+        buttonC:   { code: 'ShiftLeft',  keyCode: 16 },   // Shift   (RGSS A / West / X button)
+        buttonD:   { code: 'KeyZ',       keyCode: 90 },   // Z key   (RGSS X / North / Y button)
         start:     { code: 'Enter',      keyCode: 13 },   // duplicate of A for safety
         select:    { code: 'Escape',     keyCode: 27 }
     };
