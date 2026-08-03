@@ -37,3 +37,6 @@ Thumbs.db
 # mruby + CI-generated Frameworks — produced by Scripts/build_mruby.sh
 # Rebuilt on every CI run from source; do NOT commit to repo.
 Frameworks/
+
+# Demo games — NOT part of the app
+TestGames
