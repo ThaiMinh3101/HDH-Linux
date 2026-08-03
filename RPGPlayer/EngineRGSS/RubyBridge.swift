@@ -27,6 +27,12 @@ final class RubyBridge {
     // Pointer to mrb_state (mruby VM) — matches the type returned by mrb_open()
     private var mrb: UnsafeMutablePointer<mrb_state>?
 
+    /// M6.2: True once the VM has finished loading all scripts (start() done).
+    /// Guards advanceFrame() against calling the VM while start() is still
+    /// running on a background thread (mruby is not thread-safe).
+    private let readyLock = NSLock()
+    private var isReady = false
+
     // MARK: - Lifecycle
 
     init() {}
@@ -116,6 +122,13 @@ final class RubyBridge {
         loadRPGClasses(into: mrbPtr)
 
         // ---------------------------------------------------------------------------
+        // M6.2: Load Game_* runtime classes (GameClasses.rb) from bundle.
+        // Các class runtime (Game_Map, Game_Player, ...) dùng RPG::* làm nguồn
+        // tham chiếu tĩnh. Load sau RPGClasses.rb, trước Scripts.rvdata2.
+        // ---------------------------------------------------------------------------
+        loadGameClasses(into: mrbPtr)
+
+        // ---------------------------------------------------------------------------
         // Execute scripts in order
         // ---------------------------------------------------------------------------
         guard !scripts.isEmpty else {
@@ -164,6 +177,13 @@ final class RubyBridge {
             print("[RubyBridge] ⚠️  Có \(syntaxErrorCount) script bị lỗi cú pháp — "
                   + "script hỏng có thể khiến game chạy sai. Xem log ở trên.")
         }
+
+        // M6.2: VM đã load xong toàn bộ scripts — cho phép advanceFrame() chạy.
+        // Phải set SAU khi mọi thao tác VM trên background thread hoàn tất
+        // (mruby không thread-safe — advanceFrame gọi từ main thread).
+        readyLock.lock()
+        isReady = true
+        readyLock.unlock()
     }
 
     /// Ngăn việc capture biến var trong closure @convention(c).
@@ -202,9 +222,73 @@ final class RubyBridge {
         }
     }
 
+    // MARK: - M6.2: Game_* runtime classes
+
+    /// Load GameClasses.rb (định nghĩa Game_* runtime classes) từ bundle vào VM.
+    /// File nằm trong Resources/ → được copy vào bundle root.
+    /// Dùng Bundle(for:) thay vì Bundle.main (giống loadRPGClasses — trong
+    /// unit test Bundle.main trỏ tới test bundle không có file).
+    /// Nếu không tìm thấy hoặc lỗi cú pháp → log ⚠️ (không dừng VM — game
+    /// script vẫn có thể chạy, chỉ là Game_* classes sẽ không tồn tại).
+    private func loadGameClasses(into mrbPtr: UnsafeMutablePointer<mrb_state>) {
+        guard let url = Bundle(for: RubyBridge.self).url(forResource: "GameClasses", withExtension: "rb"),
+              let source = try? String(contentsOf: url, encoding: .utf8) else {
+            print("[RubyBridge] ⚠️  Không tìm thấy GameClasses.rb trong bundle")
+            return
+        }
+
+        var cBytes = source.utf8CString
+        let rc = cBytes.withUnsafeBufferPointer { buf in
+            var isSyntax = 0
+            let rc = mrb_bridge_load_nstring(mrbPtr, buf.baseAddress, buf.count - 1, &isSyntax)
+            lastSyntaxFlag = isSyntax != 0
+            return rc
+        }
+
+        if rc == 0 {
+            print("[RubyBridge] ✅ Game_* runtime classes loaded (GameClasses.rb)")
+        } else {
+            let err = String(cString: mrb_bridge_last_error(mrbPtr))
+            print("[RubyBridge] ⚠️  GameClasses.rb load \(lastSyntaxFlag ? "SYNTAX" : "runtime") error: \(err)")
+        }
+    }
+
+    /// Per-frame hook — gọi `advance_frame` (niladic method) trên top-level
+    /// Object mỗi CADisplayLink tick. M6.2: nền cho M6.3 scene loop.
+    ///
+    /// Game script (hoặc test) định nghĩa `def advance_frame` để update
+    /// Game_Player/Game_Map mỗi frame. Nếu method chưa được định nghĩa,
+    /// mrb_bridge_call_global trả -1 (NoMethodError) — ta log ⚠️ một lần
+    /// rồi bỏ qua (không spam log mỗi frame).
+    ///
+    /// Thread: gọi từ main thread (CADisplayLink). VM được tạo trên background
+    /// thread nhưng mruby không thread-safe — mọi truy cập VM phải qua main.
+    func advanceFrame() {
+        // M6.2: Chỉ chạy khi VM đã load xong toàn bộ scripts (start() done).
+        // start() chạy trên background thread — nếu advanceFrame gọi VM khi
+        // start() chưa xong → race condition (mruby không thread-safe).
+        readyLock.lock()
+        let ready = isReady
+        readyLock.unlock()
+        guard ready, let mrbPtr = mrb else { return }
+
+        let rc = mrb_bridge_call_global(mrbPtr, "advance_frame")
+        if rc != 0 {
+            // Log một lần duy nhất để tránh spam 60 lần/giây.
+            if !advanceFrameWarned {
+                let err = String(cString: mrb_bridge_last_error(mrbPtr))
+                print("[RubyBridge] ⚠️  advance_frame chưa được định nghĩa hoặc lỗi: \(err)")
+                advanceFrameWarned = true
+            }
+        }
+    }
+
+    /// Chỉ log lỗi advance_frame một lần (tránh spam mỗi frame).
+    private var advanceFrameWarned = false
+
     // MARK: - M6.1: Test helper (không cần SpriteRenderer)
 
-    /// Mở VM + đăng ký Marshal module + load RPGClasses.rb.
+    /// Mở VM + đăng ký Marshal module + load RPGClasses.rb + GameClasses.rb.
     /// Dùng cho unit test — tách riêng để test có thể setTestData() giữa
     /// các lần chạy script (setTestData cần VM đã mở).
     /// - Returns: true nếu mở thành công, false nếu VM đã chạy hoặc lỗi.
@@ -222,6 +306,8 @@ final class RubyBridge {
         mrb_define_marshal_module(mrbPtr)
         // Load RPG::* data classes
         loadRPGClasses(into: mrbPtr)
+        // Load Game_* runtime classes (M6.2)
+        loadGameClasses(into: mrbPtr)
         return true
     }
 

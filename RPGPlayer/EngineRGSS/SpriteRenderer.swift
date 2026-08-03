@@ -30,6 +30,16 @@ final class SpriteRenderer: NSObject, MTKViewDelegate {
     /// internal synchronisation in MTKView for M1b single-texture use).
     private(set) var currentTexture: MTLTexture?
 
+    /// M6.2: Sprite position in NDC (center). Default (0,0) = screen center.
+    /// Updated from Ruby (Game_Player movement) via setSpritePosition.
+    private(set) var spritePosition: SIMD2<Float> = SIMD2<Float>(0, 0)
+
+    /// M6.2: Sprite size in NDC. Default (2,2) = full screen (M1b behaviour).
+    private(set) var spriteSize: SIMD2<Float> = SIMD2<Float>(2, 2)
+
+    /// M6.2: Uniform buffer for the vertex shader (SpriteUniforms).
+    private var uniformBuffer: MTLBuffer?
+
     // MARK: - M5: FPS profiling
 
     /// Frame counter reset every FPS report interval.
@@ -53,6 +63,18 @@ final class SpriteRenderer: NSObject, MTKViewDelegate {
         self.textureLoader = MTKTextureLoader(device: device)
         super.init()
         buildPipeline()
+        buildUniformBuffer()
+    }
+
+    /// M6.2: Create the uniform buffer for the vertex shader (SpriteUniforms).
+    /// 16 bytes = float2 position + float2 size.
+    private func buildUniformBuffer() {
+        guard let buf = device.makeBuffer(length: 16, options: .storageModeShared) else {
+            print("[SpriteRenderer] ❌ makeBuffer(uniform) failed")
+            return
+        }
+        buf.label = "RGSS Sprite Uniforms"
+        uniformBuffer = buf
     }
 
     // MARK: - Pipeline setup
@@ -150,6 +172,22 @@ final class SpriteRenderer: NSObject, MTKViewDelegate {
         }
     }
 
+    // MARK: - M6.2: Sprite transform
+
+    /// Set the sprite's position and size in NDC.
+    /// - Parameters:
+    ///   - x: NDC X (-1 = left edge, +1 = right edge, 0 = center).
+    ///   - y: NDC Y (-1 = bottom, +1 = top, 0 = center).
+    ///   - width:  NDC width  (2 = full screen width).
+    ///   - height: NDC height (2 = full screen height).
+    ///
+    /// M6.2: called from Ruby (Game_Player movement) to move the player sprite.
+    /// Thread: main thread (called from advanceFrame via CADisplayLink).
+    func setSpritePosition(x: Float, y: Float, width: Float, height: Float) {
+        spritePosition = SIMD2<Float>(x, y)
+        spriteSize     = SIMD2<Float>(width, height)
+    }
+
     /// Procedural 64×64 checkerboard placeholder texture.
     /// M4: Used whenever an image fails to load — warm orange / dark teal palette.
     /// The `reason` parameter is logged so broken assets are easy to identify.
@@ -216,9 +254,18 @@ final class SpriteRenderer: NSObject, MTKViewDelegate {
 
         encoder.setRenderPipelineState(pipeline)
 
-        if let texture = currentTexture {
+        if let texture = currentTexture, let uniformBuffer = uniformBuffer {
+            // M6.2: Write current sprite transform into the shared uniform buffer.
+            // Layout matches SpriteUniforms in Shaders.metal: float2 position, float2 size.
+            let ptr = uniformBuffer.contents().assumingMemoryBound(to: Float.self)
+            ptr[0] = spritePosition.x
+            ptr[1] = spritePosition.y
+            ptr[2] = spriteSize.x
+            ptr[3] = spriteSize.y
+
+            encoder.setVertexBuffer(uniformBuffer, offset: 0, index: 0)
             encoder.setFragmentTexture(texture, index: 0)
-            // Full-screen triangle strip: 4 vertices, 2 triangles
+            // Triangle strip: 4 vertices, 2 triangles
             encoder.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4)
         }
 

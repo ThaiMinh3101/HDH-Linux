@@ -168,3 +168,19 @@ void mrb_bridge_set_global_string(mrb_state *mrb, const char *name,
   mrb_value str = mrb_str_new(mrb, data, (mrb_int)len);
   mrb_gv_set(mrb, mrb_intern_cstr(mrb, name), str);
 }
+
+int mrb_bridge_call_global(mrb_state *mrb, const char *method_name) {
+  // Call the method on the top-level Object (self = main object).
+  // mrb_funcall_argv with 0 args; if the method is undefined mruby raises
+  // NoMethodError — we catch it and return -1 (caller logs a warning).
+  mrb_value self = mrb_top_self(mrb);
+  mrb_value result = mrb_funcall(mrb, self, method_name, 0);
+
+  if (mrb->exc) {
+    return capture_and_clear_exception(mrb);
+  }
+
+  g_last_error[0] = '\0';
+  (void)result;
+  return 0;
+}

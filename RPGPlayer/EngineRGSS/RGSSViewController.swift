@@ -213,8 +213,11 @@ final class RGSSViewController: UIViewController {
         )
         rgss_input_update(&cState)
 
-        // TODO (future milestone): advance the mruby scene loop one frame here
-        // (Graphics.update, scene switching, etc.).
+        // M6.2: Advance the mruby scene loop one frame.
+        // Calls `advance_frame` (niladic method on top-level Object) if defined.
+        // Game script / test defines it to update Game_Player/Game_Map per frame.
+        // M6.3 will replace this with a full Graphics.update + scene switching loop.
+        rubyBridge?.advanceFrame()
     }
 
     // MARK: - Ruby engine

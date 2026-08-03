@@ -82,6 +82,16 @@ const char *mrb_bridge_last_error(mrb_state *mrb);
 void mrb_bridge_set_global_string(mrb_state *mrb, const char *name,
                                   const char *data, size_t len);
 
+/// Call a niladic method on the top-level Object (e.g. "advance_frame").
+/// M6.2: used as the per-frame hook from CADisplayLink — avoids re-parsing
+/// a Ruby script every frame. The method must be defined on Object (or be a
+/// global function) and take no arguments.
+///
+/// Returns 0 on success, -1 if a Ruby exception was raised (message available
+/// via mrb_bridge_last_error()). Safe to call when the method is undefined —
+/// returns -1 and logs a warning, does not crash.
+int mrb_bridge_call_global(mrb_state *mrb, const char *method_name);
+
 #ifdef __cplusplus
 }
 #endif
