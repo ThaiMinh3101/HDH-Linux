@@ -8,9 +8,11 @@ struct GameCardView: View {
     let entry: GameEntry
     var onDelete: (() -> Void)? = nil
 
-    /// True khi engine đã hỗ trợ play (MV / MZ)
+    /// True khi engine đã hỗ trợ play.
+    /// M6.0: thêm VX Ace (chạy được script load pipeline mruby).
+    /// XP/VX chưa hỗ trợ (data format khác — sẽ làm sau).
     private var isPlayable: Bool {
-        entry.engine == .mv || entry.engine == .mz
+        entry.engine == .mv || entry.engine == .mz || entry.engine == .rgssVXAce
     }
 
     // Thumbnail từ sandbox (nil nếu không có)
@@ -25,7 +27,7 @@ struct GameCardView: View {
     var body: some View {
         Group {
             if isPlayable {
-                NavigationLink(destination: GameDetailViewMV(entry: entry)) {
+                NavigationLink(destination: destinationView(entry)) {
                     cardContent
                 }
                 .buttonStyle(.plain)
@@ -39,6 +41,20 @@ struct GameCardView: View {
             } label: {
                 Label("Xoá game", systemImage: "trash")
             }
+        }
+    }
+
+    /// Chọn destination theo engine: MV/MZ → web engine, RGSS → mruby/Metal engine.
+    @ViewBuilder
+    private func destinationView(_ entry: GameEntry) -> some View {
+        switch entry.engine {
+        case .mv, .mz:
+            GameDetailViewMV(entry: entry)
+        case .rgssVXAce:
+            GameDetailViewRGSS(entry: entry)
+        case .rgssXP, .rgssVX, .unknown:
+            // Chưa hỗ trợ play — không nên tới đây (isPlayable = false)
+            EmptyView()
         }
     }
 

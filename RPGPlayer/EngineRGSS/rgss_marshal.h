@@ -30,68 +30,68 @@
 #ifndef RGSS_MARSHAL_H
 #define RGSS_MARSHAL_H
 
-#include <stdint.h>
 #include <stddef.h>
+#include <stdint.h>
 
 // ── Error codes ────────────────────────────────────────────────────────────
 
 typedef enum {
-    RGSS_MARSHAL_OK            =  0,
-    RGSS_MARSHAL_ERR_VERSION   = -1,  // not a Marshal stream or wrong version
-    RGSS_MARSHAL_ERR_TRUNCATED = -2,  // unexpected end of input
-    RGSS_MARSHAL_ERR_UNSUPPORTED = -3,// type tag not supported
-    RGSS_MARSHAL_ERR_ALLOC     = -4,  // memory allocation failed
-    RGSS_MARSHAL_ERR_OVERFLOW  = -5,  // integer/length out of range
+  RGSS_MARSHAL_OK = 0,
+  RGSS_MARSHAL_ERR_VERSION = -1,     // not a Marshal stream or wrong version
+  RGSS_MARSHAL_ERR_TRUNCATED = -2,   // unexpected end of input
+  RGSS_MARSHAL_ERR_UNSUPPORTED = -3, // type tag not supported
+  RGSS_MARSHAL_ERR_ALLOC = -4,       // memory allocation failed
+  RGSS_MARSHAL_ERR_OVERFLOW = -5,    // integer/length out of range
 } RGSSMarshalError;
 
 // ── Value types ────────────────────────────────────────────────────────────
 
 typedef enum {
-    RGSS_VAL_NIL    = 0,
-    RGSS_VAL_BOOL,
-    RGSS_VAL_INT,
-    RGSS_VAL_FLOAT,
-    RGSS_VAL_STRING,
-    RGSS_VAL_SYMBOL,
-    RGSS_VAL_ARRAY,
-    RGSS_VAL_HASH,
-    RGSS_VAL_OBJECT,   // generic class instance
+  RGSS_VAL_NIL = 0,
+  RGSS_VAL_BOOL,
+  RGSS_VAL_INT,
+  RGSS_VAL_FLOAT,
+  RGSS_VAL_STRING,
+  RGSS_VAL_SYMBOL,
+  RGSS_VAL_ARRAY,
+  RGSS_VAL_HASH,
+  RGSS_VAL_OBJECT, // generic class instance
 } RGSSValueType;
 
 struct RGSSValue;
 typedef struct RGSSValue RGSSValue;
 
 typedef struct {
-    RGSSValue **items;
-    size_t      count;
+  RGSSValue **items;
+  size_t count;
 } RGSSArray;
 
 typedef struct {
-    RGSSValue **keys;
-    RGSSValue **values;
-    size_t      count;
+  RGSSValue **keys;
+  RGSSValue **values;
+  size_t count;
 } RGSSHash;
 
 typedef struct {
-    char       *class_name;  // null-terminated, owned
-    RGSSHash    ivars;       // instance variable hash
+  char *class_name; // null-terminated, owned
+  RGSSHash ivars;   // instance variable hash
 } RGSSObject;
 
 struct RGSSValue {
-    RGSSValueType type;
-    union {
-        int          b;     // BOOL (0 = false, 1 = true)
-        long long    i;     // INT
-        double       f;     // FLOAT
-        struct {
-            uint8_t *data;
-            size_t   len;
-        }            s;     // STRING (raw bytes, not null-terminated)
-        char        *sym;   // SYMBOL (null-terminated, owned)
-        RGSSArray    arr;   // ARRAY
-        RGSSHash     hash;  // HASH
-        RGSSObject   obj;   // OBJECT
-    } as;
+  RGSSValueType type;
+  union {
+    int b;       // BOOL (0 = false, 1 = true)
+    long long i; // INT
+    double f;    // FLOAT
+    struct {
+      uint8_t *data;
+      size_t len;
+    } s;            // STRING (raw bytes, not null-terminated)
+    char *sym;      // SYMBOL (null-terminated, owned)
+    RGSSArray arr;  // ARRAY
+    RGSSHash hash;  // HASH
+    RGSSObject obj; // OBJECT
+  } as;
 };
 
 // ── Allocator context ──────────────────────────────────────────────────────
@@ -101,75 +101,97 @@ struct RGSSValue {
 // without requiring a public rgss_arena_alloc() API.
 
 typedef struct RGSSArena {
-    uint8_t *base;
-    size_t   cap;
-    size_t   used;
+  uint8_t *base;
+  size_t cap;
+  size_t used;
 } RGSSArena;
 
-RGSSArena  *rgss_arena_create(size_t capacity); // suggested: 2 MB
-void        rgss_arena_destroy(RGSSArena *a);
-
+RGSSArena *rgss_arena_create(size_t capacity); // suggested: 2 MB
+void rgss_arena_destroy(RGSSArena *a);
 
 // ── Decoder ───────────────────────────────────────────────────────────────
 
 typedef struct {
-    const uint8_t *buf;
-    size_t         len;
-    size_t         pos;
+  const uint8_t *buf;
+  size_t len;
+  size_t pos;
 
-    // Symbol / object back-reference tables (grow dynamically)
-    char         **sym_table;
-    size_t         sym_count;
-    size_t         sym_cap;
+  // Symbol / object back-reference tables (grow dynamically)
+  char **sym_table;
+  size_t sym_count;
+  size_t sym_cap;
 
-    RGSSValue    **obj_table;
-    size_t         obj_count;
-    size_t         obj_cap;
+  RGSSValue **obj_table;
+  size_t obj_count;
+  size_t obj_cap;
 
-    RGSSArena     *arena;
-    RGSSMarshalError last_error;
+  RGSSArena *arena;
+  RGSSMarshalError last_error;
 } RGSSMarshalDecoder;
 
 // Initialise decoder for a Marshal stream (does NOT take ownership of buf).
 // arena is used for all allocations; caller owns it.
-void         rgss_marshal_decoder_init(RGSSMarshalDecoder *d,
-                                       const uint8_t *buf, size_t len,
-                                       RGSSArena *arena);
+void rgss_marshal_decoder_init(RGSSMarshalDecoder *d, const uint8_t *buf,
+                               size_t len, RGSSArena *arena);
 
 // Decode the entire stream. Returns NULL on error; check d->last_error.
-RGSSValue   *rgss_marshal_load(RGSSMarshalDecoder *d);
+RGSSValue *rgss_marshal_load(RGSSMarshalDecoder *d);
+
+// Free the decoder's internal symbol/object back-reference tables.
+// The decoded tree itself lives in the arena (still valid until
+// rgss_arena_destroy). Safe to call even if no decode happened.
+void rgss_marshal_decoder_free_tables(RGSSMarshalDecoder *d);
 
 // ── Encoder ───────────────────────────────────────────────────────────────
 
 typedef struct {
-    uint8_t *buf;
-    size_t   len;
-    size_t   cap;
+  uint8_t *buf;
+  size_t len;
+  size_t cap;
 
-    char   **sym_table;  // interned symbols (for ';' back-refs)
-    size_t   sym_count;
-    size_t   sym_cap;
+  char **sym_table; // interned symbols (for ';' back-refs)
+  size_t sym_count;
+  size_t sym_cap;
 
-    void   **obj_table;  // encoded object pointers (for '@' back-refs)
-    size_t   obj_count;
-    size_t   obj_cap;
+  void **obj_table; // encoded object pointers (for '@' back-refs)
+  size_t obj_count;
+  size_t obj_cap;
 
-    RGSSMarshalError last_error;
+  RGSSMarshalError last_error;
 } RGSSMarshalEncoder;
 
-void         rgss_marshal_encoder_init(RGSSMarshalEncoder *e);
-void         rgss_marshal_encoder_free(RGSSMarshalEncoder *e);
+void rgss_marshal_encoder_init(RGSSMarshalEncoder *e);
+void rgss_marshal_encoder_free(RGSSMarshalEncoder *e);
 
 // Encode a single RGSSValue tree into the encoder's buffer.
-int          rgss_marshal_dump(RGSSMarshalEncoder *e, const RGSSValue *val);
+int rgss_marshal_dump(RGSSMarshalEncoder *e, const RGSSValue *val);
 
 // Access encoded bytes.
 const uint8_t *rgss_marshal_bytes(const RGSSMarshalEncoder *e);
-size_t         rgss_marshal_length(const RGSSMarshalEncoder *e);
+size_t rgss_marshal_length(const RGSSMarshalEncoder *e);
 
 // ── Convenience helpers ────────────────────────────────────────────────────
 
 // Human-readable string for an error code (static, no allocation).
-const char  *rgss_marshal_error_string(RGSSMarshalError err);
+const char *rgss_marshal_error_string(RGSSMarshalError err);
+
+// ── Tree accessors (M6.0) ──────────────────────────────────────────────────
+// Swift tránh access C union/struct trực tiếp (tên field `as` xung đột với
+// Swift keyword, anonymous struct có tên synthesized không ổn định).
+// Các hàm này cho phép đọc RGSSValue tree một cách an toàn từ Swift.
+
+// Returns the RGSSValueType of the value.
+RGSSValueType rgss_value_type(const RGSSValue *v);
+
+// Array access.
+size_t rgss_value_array_count(const RGSSValue *v);
+const RGSSValue *rgss_value_array_item(const RGSSValue *v, size_t index);
+
+// String access (raw bytes, may contain NUL).
+const uint8_t *rgss_value_string_data(const RGSSValue *v);
+size_t rgss_value_string_len(const RGSSValue *v);
+
+// Integer access.
+long long rgss_value_int(const RGSSValue *v);
 
 #endif /* RGSS_MARSHAL_H */

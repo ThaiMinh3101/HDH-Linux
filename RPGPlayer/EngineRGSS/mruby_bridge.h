@@ -43,7 +43,7 @@ typedef void (*SpriteSetBitmapCallback)(const char *path);
 ///
 /// Future milestones will add: x, y, z, opacity, visible, viewport, etc.
 void mrb_define_sprite_class(mrb_state *mrb,
-                              SpriteSetBitmapCallback bitmap_callback);
+                             SpriteSetBitmapCallback bitmap_callback);
 
 // ---------------------------------------------------------------------------
 // Script execution
@@ -56,8 +56,21 @@ void mrb_define_sprite_class(mrb_state *mrb,
 /// exception message (the buffer is overwritten on the next call).
 int mrb_bridge_run_script(mrb_state *mrb, const char *script);
 
-/// Return a C string describing the last error from mrb_bridge_run_script().
-/// Valid until the next call to mrb_bridge_run_script() or mrb_bridge_last_error().
+/// Execute a Ruby script of explicit length (binary-safe: script may contain
+/// NUL bytes). This is the M6.0 entry point used when loading decompressed
+/// RGSS scripts from Scripts.rvdata2.
+///
+/// Returns 0 on success, -1 if a Ruby exception was raised.
+/// `is_syntax_error` (optional, may be NULL) is set to 1 when the raised
+/// exception is kind_of? SyntaxError, 0 otherwise. This lets Swift distinguish
+/// a parse failure (game script is corrupt — hard error) from a runtime failure
+/// (binding not yet implemented — expected warning during M6).
+int mrb_bridge_load_nstring(mrb_state *mrb, const char *script, size_t len,
+                            int *is_syntax_error);
+
+/// Return a C string describing the last error from mrb_bridge_run_script()
+/// or mrb_bridge_load_nstring().
+/// Valid until the next call to either function or mrb_bridge_last_error().
 /// Never returns NULL (returns "" if no error).
 const char *mrb_bridge_last_error(mrb_state *mrb);
 

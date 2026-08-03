@@ -47,6 +47,24 @@ final class RubyBridge {
     ///   - script: Ruby source code (RGSS-compatible).
     ///   - renderer: The Metal renderer that RGSS Sprite calls will drive.
     func start(script: String, renderer: SpriteRenderer) {
+        start(renderer: renderer, scripts: [RGSSScript(id: 0, name: "main.rb", source: script)])
+    }
+
+    /// Boot the mruby VM and run a list of RGSS scripts IN ORDER.
+    ///
+    /// M6.0: scripts đến từ ScriptLoader (đã decode + zlib decompress từ
+    /// Data/Scripts.rvdata2). Thứ tự load cực kỳ quan trọng — script sau phụ
+    /// thuộc class định nghĩa ở script trước.
+    ///
+    /// Error handling M6.0:
+    ///   - SyntaxError   → log ❌ và dừng load (script hỏng = lỗi nghiêm trọng)
+    ///   - runtime error → log ⚠️ và TIẾP TỤC (binding RGSS chưa implement hết,
+    ///                     script sau vẫn có thể load được — đúng mục tiêu M6.0)
+    ///
+    /// - Parameters:
+    ///   - renderer: The Metal renderer that RGSS Sprite calls will drive.
+    ///   - scripts:  Các script RGSS đã giải nén, theo đúng thứ tự trong rvdata2.
+    func start(renderer: SpriteRenderer, scripts: [RGSSScript]) {
         guard mrb == nil else {
             print("[RubyBridge] ⚠️  VM already running — ignoring duplicate start()")
             return
@@ -88,18 +106,57 @@ final class RubyBridge {
         print("[RubyBridge] ✅ RGSS modules registered: Marshal")
 
         // ---------------------------------------------------------------------------
-        // Execute script
+        // Execute scripts in order
         // ---------------------------------------------------------------------------
-        let rc = script.withCString { cStr in
-            mrb_bridge_run_script(mrbPtr, cStr)
+        guard !scripts.isEmpty else {
+            print("[RubyBridge] ⚠️  Không có script nào để load")
+            return
         }
 
-        if rc == 0 {
-            print("[RubyBridge] ✅ Script executed successfully")
-        } else {
-            let errMsg = String(cString: mrb_bridge_last_error(mrbPtr))
-            print("[RubyBridge] ❌ Ruby exception: \(errMsg)")
-            // Non-fatal for M1b — renderer may still have loaded a fallback texture
+        var syntaxErrorCount = 0
+        var loadedCount      = 0
+        var runtimeErrorCount = 0
+
+        for script in scripts {
+            // Binary-safe load — dùng utf8CString (null-terminated [CChar])
+            // thay vì withCString + utf8.count (có thể overrun nếu chứa NUL).
+            // Ruby source RGSS không chứa NUL; nếu có, utf8CString truncate
+            // tại NUL → parse sai → SyntaxError — đúng hành vi fail mong đợi.
+            var cBytes = script.source.utf8CString
+            let rc = cBytes.withUnsafeBufferPointer { buf in
+                var isSyntax = 0
+                // buf.count bao gồm null terminator — trừ 1 để không load NUL cuối
+                let rc = mrb_bridge_load_nstring(mrbPtr, buf.baseAddress, buf.count - 1, &isSyntax)
+                // Lưu isSyntax để dùng sau (không thể capture biến var trong C closure)
+                lastSyntaxFlag = isSyntax != 0
+                return rc
+            }
+
+            if rc == 0 {
+                loadedCount += 1
+                print("[RubyBridge]   ✅ #\(script.id) \"\(script.name)\"")
+            } else {
+                let errMsg = String(cString: mrb_bridge_last_error(mrbPtr))
+                if lastSyntaxFlag {
+                    syntaxErrorCount += 1
+                    print("[RubyBridge]   ❌ #\(script.id) \"\(script.name)\" SYNTAX ERROR: \(errMsg)")
+                } else {
+                    runtimeErrorCount += 1
+                    print("[RubyBridge]   ⚠️  #\(script.id) \"\(script.name)\" runtime: \(errMsg)")
+                }
+            }
+        }
+
+        print("[RubyBridge] ✅ Load xong \(loadedCount)/\(scripts.count) scripts "
+              + "(\(syntaxErrorCount) syntax, \(runtimeErrorCount) runtime error)")
+
+        if syntaxErrorCount > 0 {
+            print("[RubyBridge] ⚠️  Có \(syntaxErrorCount) script bị lỗi cú pháp — "
+                  + "script hỏng có thể khiến game chạy sai. Xem log ở trên.")
         }
     }
+
+    /// Ngăn việc capture biến var trong closure @convention(c).
+    /// Set ngay trong C callback, đọc ngay sau khi gọi.
+    private var lastSyntaxFlag = false
 }

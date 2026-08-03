@@ -224,11 +224,34 @@ final class RGSSViewController: UIViewController {
 
         rubyBridge = RubyBridge()
 
-        // M1b test script — behaviour matches RGSS3 "class Sprite" documentation:
-        //   Sprite.new        → creates a sprite (no viewport needed for proof)
-        //   sprite.bitmap =   → triggers Metal texture load via C callback
-        //
-        // In later milestones this block is replaced by loading Game.rb / Scripts.rxdata.
+        let capturedBridge   = rubyBridge!
+        let capturedRenderer = renderer!
+        let capturedGamePath = gamePath
+
+        DispatchQueue.global(qos: .userInitiated).async {
+            // M6.0: Nếu có gamePath chứa Data/Scripts.rvdata2 → load script thật.
+            // Ngược lại → fallback test script M1b (chứng minh pipeline).
+            guard let gameRoot = capturedGamePath else {
+                self.runHelloSpriteTest(bridge: capturedBridge, renderer: capturedRenderer)
+                return
+            }
+
+            do {
+                let scripts = try ScriptLoader.loadScripts(fromGameRoot: gameRoot)
+                print("[RGSSViewController] ✅ Đã giải nén \(scripts.count) scripts từ Scripts.rvdata2")
+                capturedBridge.start(renderer: capturedRenderer, scripts: scripts)
+            } catch {
+                print("[RGSSViewController] ❌ Không đọc được Scripts.rvdata2: \(error.localizedDescription)")
+                print("[RGSSViewController] ⚠️  Fallback về Hello Sprite test script")
+                self.runHelloSpriteTest(bridge: capturedBridge, renderer: capturedRenderer)
+            }
+        }
+    }
+
+    /// M1b test script — behaviour matches RGSS3 "class Sprite" documentation:
+    ///   Sprite.new        → creates a sprite (no viewport needed for proof)
+    ///   sprite.bitmap =   → triggers Metal texture load via C callback
+    private func runHelloSpriteTest(bridge: RubyBridge, renderer: SpriteRenderer) {
         let testScript = """
         # M1b — Hello Sprite: proves Ruby → C bridge → Metal pipeline
         sprite = Sprite.new
@@ -239,13 +262,7 @@ final class RGSSViewController: UIViewController {
         puts "Input::DOWN = #{Input::DOWN}"
         puts "Input::C    = #{Input::C}"
         """
-
-        let capturedBridge   = rubyBridge!
-        let capturedRenderer = renderer!
-
-        DispatchQueue.global(qos: .userInitiated).async {
-            capturedBridge.start(script: testScript, renderer: capturedRenderer)
-        }
+        bridge.start(script: testScript, renderer: renderer)
     }
 
     // MARK: - Error display
