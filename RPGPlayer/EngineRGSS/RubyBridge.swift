@@ -218,7 +218,7 @@ final class RubyBridge {
             // tại NUL → parse sai → SyntaxError — đúng hành vi fail mong đợi.
             var cBytes = script.source.utf8CString
             let rc = cBytes.withUnsafeBufferPointer { buf in
-                var isSyntax = 0
+                var isSyntax: Int32 = 0
                 // buf.count bao gồm null terminator — trừ 1 để không load NUL cuối
                 let rc = mrb_bridge_load_nstring(mrbPtr, buf.baseAddress, buf.count - 1, &isSyntax)
                 // Lưu isSyntax để dùng sau (không thể capture biến var trong C closure)
@@ -278,7 +278,7 @@ final class RubyBridge {
 
          var cBytes = source.utf8CString
          let rc = cBytes.withUnsafeBufferPointer { buf in
-             var isSyntax = 0
+             var isSyntax: Int32 = 0
              let rc = mrb_bridge_load_nstring(mrbPtr, buf.baseAddress, buf.count - 1, &isSyntax)
              lastSyntaxFlag = isSyntax != 0
              return rc
@@ -310,7 +310,7 @@ final class RubyBridge {
 
         var cBytes = source.utf8CString
         let rc = cBytes.withUnsafeBufferPointer { buf in
-            var isSyntax = 0
+            var isSyntax: Int32 = 0
             let rc = mrb_bridge_load_nstring(mrbPtr, buf.baseAddress, buf.count - 1, &isSyntax)
             lastSyntaxFlag = isSyntax != 0
             return rc
@@ -341,7 +341,7 @@ final class RubyBridge {
 
         var cBytes = source.utf8CString
         let rc = cBytes.withUnsafeBufferPointer { buf in
-            var isSyntax = 0
+            var isSyntax: Int32 = 0
             let rc = mrb_bridge_load_nstring(mrbPtr, buf.baseAddress, buf.count - 1, &isSyntax)
             lastSyntaxFlag = isSyntax != 0
             return rc
@@ -367,7 +367,7 @@ final class RubyBridge {
 
         var cBytes = source.utf8CString
         let rc = cBytes.withUnsafeBufferPointer { buf in
-            var isSyntax = 0
+            var isSyntax: Int32 = 0
             let rc = mrb_bridge_load_nstring(mrbPtr, buf.baseAddress, buf.count - 1, &isSyntax)
             lastSyntaxFlag = isSyntax != 0
             return rc
@@ -394,7 +394,7 @@ final class RubyBridge {
 
          var cBytes = source.utf8CString
          let rc = cBytes.withUnsafeBufferPointer { buf in
-             var isSyntax = 0
+             var isSyntax: Int32 = 0
              let rc = mrb_bridge_load_nstring(mrbPtr, buf.baseAddress, buf.count - 1, &isSyntax)
              lastSyntaxFlag = isSyntax != 0
              return rc
@@ -494,7 +494,7 @@ final class RubyBridge {
 
         var cBytes = script.utf8CString
         let rc = cBytes.withUnsafeBufferPointer { buf in
-            var isSyntax = 0
+            var isSyntax: Int32 = 0
             let rc = mrb_bridge_load_nstring(mrbPtr, buf.baseAddress, buf.count - 1, &isSyntax)
             lastSyntaxFlag = isSyntax != 0
             return rc
