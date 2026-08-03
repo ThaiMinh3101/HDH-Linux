@@ -30,6 +30,25 @@ extern "C" {
 /// The Swift implementation must copy `path` before returning if it needs it.
 typedef void (*SpriteSetBitmapCallback)(const char *path);
 
+/// Snapshot of a Window's render state, passed to the Swift renderer.
+/// M6.4: minimal Window built-in — geometry + opacity + visible + text.
+/// `text` is a valid UTF-8 C string owned by the mruby heap; the Swift side
+/// must copy it before returning.
+typedef struct {
+  int x;
+  int y;
+  int width;
+  int height;
+  int opacity;
+  int visible;
+  const char *text;
+} RGSSWindowState;
+
+/// Called when a Window's render state changes (geometry, opacity, visible,
+/// or text). The callback is invoked on whichever thread called the Ruby
+/// method. The Swift implementation must copy `state->text` before returning.
+typedef void (*WindowRenderCallback)(const RGSSWindowState *state);
+
 // ---------------------------------------------------------------------------
 // VM setup
 // ---------------------------------------------------------------------------
@@ -45,6 +64,27 @@ typedef void (*SpriteSetBitmapCallback)(const char *path);
 /// Future milestones will add: x, y, z, opacity, visible, viewport, etc.
 void mrb_define_sprite_class(mrb_state *mrb,
                              SpriteSetBitmapCallback bitmap_callback);
+
+/// Register the RGSS Window class in the mruby VM.
+/// Must be called once, after mrb_open() and before running any RGSS script.
+///
+/// Defines (M6.4 scope):
+///   Window.new                     — creates a Window object
+///   Window#x / #x=                 — left edge (pixels)
+///   Window#y / #y=                 — top edge (pixels)
+///   Window#width / #width=         — window width (pixels)
+///   Window#height / #height=       — window height (pixels)
+///   Window#opacity / #opacity=     — 0-255
+///   Window#visible / #visible=     — true/false
+///   Window#z / #z=                 — z-order (stored, not yet used for
+///   sorting) Window#windowskin / #windowskin= — windowskin image path (stored)
+///   Window#contents / #contents=   — text contents (M6.4 simplified: String)
+///   Window#refresh                 — forces a render callback
+///
+/// Any state change (x/y/width/height/opacity/visible/contents=) fires
+/// window_callback with the full RGSSWindowState snapshot.
+void mrb_define_window_class(mrb_state *mrb,
+                             WindowRenderCallback window_callback);
 
 // ---------------------------------------------------------------------------
 // Script execution

@@ -37,6 +37,18 @@ final class SpriteRenderer: NSObject, MTKViewDelegate {
     /// M6.2: Sprite size in NDC. Default (2,2) = full screen (M1b behaviour).
     private(set) var spriteSize: SIMD2<Float> = SIMD2<Float>(2, 2)
 
+     // M6.4: Window overlay quad (drawn on top of the tilemap).
+     private(set) var windowTexture: MTLTexture?
+     private(set) var windowPosition: SIMD2<Float> = SIMD2<Float>(0, 0)
+     private(set) var windowSize: SIMD2<Float> = SIMD2<Float>(0, 0)
+     /// M6.4: Map quad NDC rect (from setTilemapTexture) — anchor for the
+     /// window overlay in RGSS logical screen space.
+     private(set) var mapNDCPosition: SIMD2<Float> = SIMD2<Float>(0, 0)
+     private(set) var mapNDCSize: SIMD2<Float> = SIMD2<Float>(2, 2)
+     /// RGSS3 (VX Ace) logical screen resolution in pixels.
+     static let rgssScreenWidth: Float = 544
+     static let rgssScreenHeight: Float = 416
+
     /// M6.2: Uniform buffer for the vertex shader (SpriteUniforms).
     private var uniformBuffer: MTLBuffer?
 
@@ -199,6 +211,8 @@ final class SpriteRenderer: NSObject, MTKViewDelegate {
          currentTexture = texture
          guard texture != nil, mapWidth > 0, mapHeight > 0, viewSize.width > 0, viewSize.height > 0 else {
              // Fallback: full-screen (M1b behaviour)
+             mapNDCPosition = SIMD2<Float>(0, 0)
+             mapNDCSize     = SIMD2<Float>(2, 2)
              spritePosition = SIMD2<Float>(0, 0)
              spriteSize     = SIMD2<Float>(2, 2)
              return
@@ -217,8 +231,33 @@ final class SpriteRenderer: NSObject, MTKViewDelegate {
          let ndcW = Float(scaledW / viewSize.width) * 2.0
          let ndcH = Float(scaledH / viewSize.height) * 2.0
 
-         spritePosition = SIMD2<Float>(0, 0)
-         spriteSize     = SIMD2<Float>(ndcW, ndcH)
+         mapNDCPosition = SIMD2<Float>(0, 0)
+         mapNDCSize     = SIMD2<Float>(ndcW, ndcH)
+         spritePosition = mapNDCPosition
+         spriteSize     = mapNDCSize
+     }
+
+     /// M6.4: Set the window overlay texture. The window rect is given in RGSS
+     /// logical screen pixels (VX Ace: 544×416) and is converted to NDC within
+     /// the letterboxed map rect (RGSS screen = map-display area in M6.4).
+     /// The window is drawn on top of the tilemap (second quad).
+     /// - Parameters:
+     ///   - texture: The window MTLTexture (from WindowRenderer; nil = hidden).
+     ///   - x, y: Window top-left in RGSS logical pixels.
+     ///   - width, height: Window size in RGSS logical pixels.
+     func setWindowTexture(_ texture: MTLTexture?, x: Int, y: Int, width: Int, height: Int) {
+         windowTexture = texture
+         let w = Float(max(0, width)), h = Float(max(0, height))
+         let mapLeft = mapNDCPosition.x - mapNDCSize.x / 2
+         let mapTop  = mapNDCPosition.y + mapNDCSize.y / 2   // NDC Y-up
+         windowPosition = SIMD2<Float>(
+             mapLeft + (Float(x) + w / 2) / Self.rgssScreenWidth  * mapNDCSize.x,
+             mapTop  - (Float(y) + h / 2) / Self.rgssScreenHeight * mapNDCSize.y
+         )
+         windowSize = SIMD2<Float>(
+             w / Self.rgssScreenWidth  * mapNDCSize.x,
+             h / Self.rgssScreenHeight * mapNDCSize.y
+         )
      }
 
     /// Procedural 64×64 checkerboard placeholder texture.
@@ -287,20 +326,33 @@ final class SpriteRenderer: NSObject, MTKViewDelegate {
 
         encoder.setRenderPipelineState(pipeline)
 
-        if let texture = currentTexture, let uniformBuffer = uniformBuffer {
-            // M6.2: Write current sprite transform into the shared uniform buffer.
-            // Layout matches SpriteUniforms in Shaders.metal: float2 position, float2 size.
-            let ptr = uniformBuffer.contents().assumingMemoryBound(to: Float.self)
-            ptr[0] = spritePosition.x
-            ptr[1] = spritePosition.y
-            ptr[2] = spriteSize.x
-            ptr[3] = spriteSize.y
+         if let texture = currentTexture, let uniformBuffer = uniformBuffer {
+             // M6.2: Write current sprite transform into the shared uniform buffer.
+             // Layout matches SpriteUniforms in Shaders.metal: float2 position, float2 size.
+             let ptr = uniformBuffer.contents().assumingMemoryBound(to: Float.self)
+             ptr[0] = spritePosition.x
+             ptr[1] = spritePosition.y
+             ptr[2] = spriteSize.x
+             ptr[3] = spriteSize.y
 
-            encoder.setVertexBuffer(uniformBuffer, offset: 0, index: 0)
-            encoder.setFragmentTexture(texture, index: 0)
-            // Triangle strip: 4 vertices, 2 triangles
-            encoder.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4)
-        }
+             encoder.setVertexBuffer(uniformBuffer, offset: 0, index: 0)
+             encoder.setFragmentTexture(texture, index: 0)
+             // Triangle strip: 4 vertices, 2 triangles
+             encoder.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4)
+         }
+
+         // M6.4: Window overlay — own quad drawn on top of sprite/tilemap.
+         // Independent of whether the sprite texture is present.
+         if let winTex = windowTexture, let uniformBuffer = uniformBuffer {
+             let ptr = uniformBuffer.contents().assumingMemoryBound(to: Float.self)
+             ptr[0] = windowPosition.x
+             ptr[1] = windowPosition.y
+             ptr[2] = windowSize.x
+             ptr[3] = windowSize.y
+             encoder.setVertexBuffer(uniformBuffer, offset: 0, index: 0)
+             encoder.setFragmentTexture(winTex, index: 0)
+             encoder.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4)
+         }
 
         encoder.endEncoding()
         commandBuffer.present(drawable)

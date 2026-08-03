@@ -14,6 +14,11 @@ import Foundation
 // ---------------------------------------------------------------------------
 private var _rgssRenderer: SpriteRenderer?
 
+// M6.4: Window renderer reference for the C window callback boundary.
+private var _windowRenderer: WindowRenderer?
+// M6.4: game root for the window renderer callback (set in start()).
+private var _windowGameRoot: URL?
+
 // ---------------------------------------------------------------------------
 // MARK: - RubyBridge
 // ---------------------------------------------------------------------------
@@ -39,6 +44,8 @@ final class RubyBridge {
 
     deinit {
         _rgssRenderer = nil
+        _windowRenderer = nil
+        _windowGameRoot = nil
         if let mrb = mrb {
             mrb_close(mrb)
         }
@@ -52,8 +59,11 @@ final class RubyBridge {
     /// - Parameters:
     ///   - script: Ruby source code (RGSS-compatible).
     ///   - renderer: The Metal renderer that RGSS Sprite calls will drive.
-    func start(script: String, renderer: SpriteRenderer) {
-        start(renderer: renderer, scripts: [RGSSScript(id: 0, name: "main.rb", source: script)])
+    ///   - gameRoot: Game sandbox root (nil = bundle test path).
+    ///   - windowRenderer: M6.4 — Window renderer for Window_Message display.
+    func start(script: String, renderer: SpriteRenderer, gameRoot: URL? = nil, windowRenderer: WindowRenderer? = nil) {
+        start(renderer: renderer, scripts: [RGSSScript(id: 0, name: "main.rb", source: script)],
+              gameRoot: gameRoot, windowRenderer: windowRenderer)
     }
 
     /// Boot the mruby VM and run a list of RGSS scripts IN ORDER.
@@ -74,7 +84,7 @@ final class RubyBridge {
     /// - Parameters:
     ///   - renderer: The Metal renderer that RGSS Sprite calls will drive.
     ///   - scripts:  Các script RGSS đã giải nén, theo đúng thứ tự trong rvdata2.
-    func start(renderer: SpriteRenderer, scripts: [RGSSScript]) {
+    func start(renderer: SpriteRenderer, scripts: [RGSSScript], gameRoot: URL? = nil, windowRenderer: WindowRenderer? = nil) {
         guard mrb == nil else {
             print("[RubyBridge] ⚠️  VM already running — ignoring duplicate start()")
             return
@@ -82,6 +92,8 @@ final class RubyBridge {
 
         // Store globally for C callback (no captures allowed in @convention(c))
         _rgssRenderer = renderer
+        _windowGameRoot = gameRoot
+        _windowRenderer = windowRenderer
 
         // Open mruby VM
         guard let mrbPtr = mrb_open() else {
@@ -106,6 +118,53 @@ final class RubyBridge {
         }
         mrb_define_sprite_class(mrbPtr, bitmapCallback)
         print("[RubyBridge] ✅ RGSS classes registered: Sprite")
+
+        // ---------------------------------------------------------------------------
+        // M6.4: Register RGSS Window class.
+        // The callback is @convention(c): no local variable captures.
+        // It accesses _windowRenderer + _windowGameRoot via module globals.
+        // ---------------------------------------------------------------------------
+         // M6.4: Window callback cần xử lý trên main thread (truy cập renderer
+         // + game sandbox). gameRoot có thể nil trong test path (Hello Sprite)
+         // — khi đó dùng Bundle.main làm nguồn asset thay vì bỏ qua window.
+         let windowCallback: WindowRenderCallback = { statePtr in
+             guard let statePtr = statePtr else { return }
+             let s = statePtr.pointee
+             var text = ""
+             if let t = s.text { text = String(cString: t) }
+             let renderState = RGSSWindowRenderState(
+                 x: Int(s.x), y: Int(s.y),
+                 width: Int(s.width), height: Int(s.height),
+                 opacity: Int(s.opacity),
+                 visible: s.visible != 0,
+                 text: text
+             )
+             DispatchQueue.main.async {
+                 if let root = _windowGameRoot {
+                     _windowRenderer?.render(state: renderState, gameRoot: root)
+                 } else {
+                     // Test path: vẽ window với placeholder texture (bundle
+                     // RPG_MAKER resources có thể chưa tồn tại) để chứng minh
+                     // Metal pipeline + 9-slice hoạt động.
+                     _windowRenderer?.render(state: renderState, gameRoot: Bundle.main.bundleURL)
+                 }
+                 // Luôn set texture vào SpriteRenderer (nil texture = hidden)
+                 // để window overlay hiển thị/ẩn đúng theo `visible`.
+                 if let spriteRenderer = _rgssRenderer {
+                     if renderState.visible {
+                         spriteRenderer.setWindowTexture(
+                             _windowRenderer?.windowTexture,
+                             x: renderState.x, y: renderState.y,
+                             width: renderState.width, height: renderState.height
+                         )
+                     } else {
+                         spriteRenderer.setWindowTexture(nil, x: 0, y: 0, width: 0, height: 0)
+                     }
+                 }
+             }
+         }
+         mrb_define_window_class(mrbPtr, windowCallback)
+        print("[RubyBridge] ✅ RGSS classes registered: Window")
 
         // Register Input module (M2: trigger?/press?/repeat?, dir4/dir8)
         mrb_define_input_module(mrbPtr)
@@ -134,6 +193,7 @@ final class RubyBridge {
         // tham chiếu tĩnh. Load sau RPGClasses.rb, trước Scripts.rvdata2.
         // ---------------------------------------------------------------------------
         loadGameClasses(into: mrbPtr)
+        loadWindowClasses(into: mrbPtr)
 
         // ---------------------------------------------------------------------------
         // Execute scripts in order
@@ -291,6 +351,33 @@ final class RubyBridge {
         }
     }
 
+    /// M6.4: Load WindowClasses.rb (Window_Base/Window_Message/Window_Selectable)
+    /// từ bundle vào VM. Load sau GameClasses.rb, trước Scripts.rvdata2.
+    /// Dùng Bundle(for:) thay vì Bundle.main (giống loadGameClasses).
+    /// Nếu không tìm thấy hoặc lỗi cú pháp → log ⚠️ (không dừng VM).
+    private func loadWindowClasses(into mrbPtr: UnsafeMutablePointer<mrb_state>) {
+         guard let url = Bundle(for: RubyBridge.self).url(forResource: "WindowClasses", withExtension: "rb"),
+               let source = try? String(contentsOf: url, encoding: .utf8) else {
+             print("[RubyBridge] ⚠️  Không tìm thấy WindowClasses.rb trong bundle")
+             return
+         }
+
+         var cBytes = source.utf8CString
+         let rc = cBytes.withUnsafeBufferPointer { buf in
+             var isSyntax = 0
+             let rc = mrb_bridge_load_nstring(mrbPtr, buf.baseAddress, buf.count - 1, &isSyntax)
+             lastSyntaxFlag = isSyntax != 0
+             return rc
+         }
+
+         if rc == 0 {
+             print("[RubyBridge] ✅ Window_* classes loaded (WindowClasses.rb)")
+         } else {
+             let err = String(cString: mrb_bridge_last_error(mrbPtr))
+             print("[RubyBridge] ⚠️  WindowClasses.rb load \(lastSyntaxFlag ? "SYNTAX" : "runtime") error: \(err)")
+         }
+     }
+
     /// Per-frame hook — gọi `advance_frame` (niladic method) trên top-level
     /// Object mỗi CADisplayLink tick. M6.2: nền cho M6.3 scene loop.
     ///
@@ -341,14 +428,21 @@ final class RubyBridge {
         mrb = mrbPtr
 
          // Register Marshal module (cần cho test Marshal.load)
-         mrb_define_marshal_module(mrbPtr)
-         // Load RGSS built-in classes (M6.3: Table)
-         loadRGSSBuiltins(into: mrbPtr)
-         // Load RPG::* data classes
-         loadRPGClasses(into: mrbPtr)
-         // Load Game_* runtime classes (M6.2)
-         loadGameClasses(into: mrbPtr)
-         return true
+          mrb_define_marshal_module(mrbPtr)
+          // M6.4: Register Window class (Window_Base < Window cần Window tồn tại
+          // trong VM — nếu không, WindowClasses.rb load sẽ fail NoMethodError).
+          let testWindowCallback: WindowRenderCallback = { _ in
+              // Test không render Metal — chỉ cần class tồn tại.
+          }
+          mrb_define_window_class(mrbPtr, testWindowCallback)
+          // Load RGSS built-in classes (M6.3: Table)
+          loadRGSSBuiltins(into: mrbPtr)
+          // Load RPG::* data classes
+          loadRPGClasses(into: mrbPtr)
+          // Load Game_* runtime classes (M6.2)
+          loadGameClasses(into: mrbPtr)
+          loadWindowClasses(into: mrbPtr)
+          return true
     }
 
     /// Chạy test script trên VM hiện có (nếu đã mở qua openTestVM) hoặc mở

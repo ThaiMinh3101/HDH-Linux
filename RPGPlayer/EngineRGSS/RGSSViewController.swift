@@ -34,10 +34,11 @@ final class RGSSViewController: UIViewController {
      private var tilemapRenderer: TilemapRenderer?
      /// M6.3: Đã render tilemap chưa (tránh render lại mỗi frame).
      private var tilemapRendered = false
-     /// M6.3: Đã thử render thất bại chưa — chống spam retry mỗi frame (60fps).
      /// Nếu game thiếu file .rvdata2 hoặc tileset image → lỗi vĩnh viễn,
      /// không retry vô hạn (decode 16MB arena mỗi frame = tốn CPU).
      private var tilemapRenderFailed = false
+     /// M6.4: Window renderer — vẽ Window RGSS3 (windowskin 9-slice + text).
+     private var windowRenderer: WindowRenderer?
 
     /// CADisplayLink drives the per-frame input pump.
     /// Full RGSS scene loop (Graphics.update, scene switching) is a future milestone.
@@ -121,6 +122,7 @@ final class RGSSViewController: UIViewController {
 
          // M6.3: Tilemap renderer dùng chung device.
          tilemapRenderer = TilemapRenderer(device: device)
+         windowRenderer = WindowRenderer(device: device)
          return true
      }
 
@@ -311,7 +313,7 @@ final class RGSSViewController: UIViewController {
             do {
                 let scripts = try ScriptLoader.loadScripts(fromGameRoot: gameRoot)
                 print("[RGSSViewController] ✅ Đã giải nén \(scripts.count) scripts từ Scripts.rvdata2")
-                capturedBridge.start(renderer: capturedRenderer, scripts: scripts)
+                capturedBridge.start(renderer: capturedRenderer, scripts: scripts, gameRoot: capturedGamePath, windowRenderer: self.windowRenderer)
             } catch {
                 print("[RGSSViewController] ❌ Không đọc được Scripts.rvdata2: \(error.localizedDescription)")
                 print("[RGSSViewController] ⚠️  Fallback về Hello Sprite test script")
@@ -329,12 +331,21 @@ final class RGSSViewController: UIViewController {
         sprite = Sprite.new
         sprite.bitmap = "test.png"
 
+        # M6.4 — Test Window_Message: hiển thị 1 message box text tĩnh.
+        # Window_Base/Window_Message được load từ WindowClasses.rb (bundle).
+        msg = Window_Message.new(40, 200, 400, 100)
+        msg.start_message("Hello from RPG Player!\\nThis is a test message box.")
+
         # M2 — Input sanity check (runs once at load time, not per-frame)
         # In a real game these would be called inside a loop driven by Graphics.update.
         puts "Input::DOWN = #{Input::DOWN}"
         puts "Input::C    = #{Input::C}"
         """
-        bridge.start(script: testScript, renderer: renderer)
+        // M6.4: Truyền windowRenderer để test path vẽ window 9-slice + text
+        // qua Metal (gameRoot nil → WindowRenderer dùng Bundle.main làm nguồn
+        // assets, hiển thị placeholder texture nếu thiếu windowskin).
+        bridge.start(script: testScript, renderer: renderer,
+                     gameRoot: nil, windowRenderer: windowRenderer)
     }
 
     // MARK: - Error display

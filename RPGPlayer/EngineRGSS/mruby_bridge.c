@@ -24,6 +24,9 @@
 
 static SpriteSetBitmapCallback g_bitmap_callback = NULL;
 
+// M6.4: Window render callback (set by mrb_define_window_class).
+static WindowRenderCallback g_window_callback = NULL;
+
 // Stores the last exception message. Sized to hold typical Ruby backtraces.
 static char g_last_error[2048] = {0};
 
@@ -75,6 +78,139 @@ static mrb_value mrb_sprite_get_bitmap(mrb_state *mrb, mrb_value self) {
 }
 
 // ---------------------------------------------------------------------------
+// Window method implementations
+// RGSS behavior reference: "class Window" in RGSS Reference Manual
+// ---------------------------------------------------------------------------
+
+/// Fire the window render callback with the current state snapshot.
+/// Builds an RGSSWindowState from the Window's ivars and calls
+/// g_window_callback. The `text` pointer points into the mruby heap — the Swift
+/// side must copy it.
+static void window_fire_render(mrb_state *mrb, mrb_value self) {
+  if (!g_window_callback)
+    return;
+
+  RGSSWindowState state;
+  state.x = (int)mrb_fixnum(mrb_iv_get(mrb, self, mrb_intern_lit(mrb, "@x")));
+  state.y = (int)mrb_fixnum(mrb_iv_get(mrb, self, mrb_intern_lit(mrb, "@y")));
+  state.width =
+      (int)mrb_fixnum(mrb_iv_get(mrb, self, mrb_intern_lit(mrb, "@width")));
+  state.height =
+      (int)mrb_fixnum(mrb_iv_get(mrb, self, mrb_intern_lit(mrb, "@height")));
+  state.opacity =
+      (int)mrb_fixnum(mrb_iv_get(mrb, self, mrb_intern_lit(mrb, "@opacity")));
+  state.visible =
+      mrb_test(mrb_iv_get(mrb, self, mrb_intern_lit(mrb, "@visible"))) ? 1 : 0;
+
+  mrb_value text = mrb_iv_get(mrb, self, mrb_intern_lit(mrb, "@contents"));
+  if (mrb_string_p(text)) {
+    state.text = mrb_str_to_cstr(mrb, text);
+  } else {
+    state.text = "";
+  }
+
+  g_window_callback(&state);
+}
+
+/// Window.new — creates a Window with default geometry (RGSS3 defaults).
+static mrb_value mrb_window_initialize(mrb_state *mrb, mrb_value self) {
+  mrb_value x, y, width, height;
+  mrb_get_args(mrb, "|oooo", &x, &y, &width, &height);
+
+  mrb_iv_set(mrb, self, mrb_intern_lit(mrb, "@x"),
+             mrb_fixnum_value(mrb_fixnum(x)));
+  mrb_iv_set(mrb, self, mrb_intern_lit(mrb, "@y"),
+             mrb_fixnum_value(mrb_fixnum(y)));
+  mrb_iv_set(mrb, self, mrb_intern_lit(mrb, "@width"),
+             mrb_fixnum_value(mrb_fixnum(width)));
+  mrb_iv_set(mrb, self, mrb_intern_lit(mrb, "@height"),
+             mrb_fixnum_value(mrb_fixnum(height)));
+  mrb_iv_set(mrb, self, mrb_intern_lit(mrb, "@opacity"), mrb_fixnum_value(255));
+  mrb_iv_set(mrb, self, mrb_intern_lit(mrb, "@visible"), mrb_true_value());
+  mrb_iv_set(mrb, self, mrb_intern_lit(mrb, "@z"), mrb_fixnum_value(0));
+  mrb_iv_set(mrb, self, mrb_intern_lit(mrb, "@windowskin"), mrb_nil_value());
+  mrb_iv_set(mrb, self, mrb_intern_lit(mrb, "@contents"),
+             mrb_str_new_cstr(mrb, ""));
+
+  window_fire_render(mrb, self);
+  return self;
+}
+
+/// Generic getter/setter for an integer ivar that fires the render callback.
+/// `ivar_name` must be a literal interned string.
+#define WINDOW_INT_ACCESSOR(ruby_name, ivar)                                   \
+  static mrb_value mrb_window_get_##ruby_name(mrb_state *mrb,                  \
+                                              mrb_value self) {                \
+    return mrb_iv_get(mrb, self, mrb_intern_lit(mrb, ivar));                   \
+  }                                                                            \
+  static mrb_value mrb_window_set_##ruby_name(mrb_state *mrb,                  \
+                                              mrb_value self) {                \
+    mrb_int v;                                                                 \
+    mrb_get_args(mrb, "i", &v);                                                \
+    mrb_iv_set(mrb, self, mrb_intern_lit(mrb, ivar), mrb_fixnum_value(v));     \
+    window_fire_render(mrb, self);                                             \
+    return mrb_fixnum_value(v);                                                \
+  }
+
+WINDOW_INT_ACCESSOR(x, "@x")
+WINDOW_INT_ACCESSOR(y, "@y")
+WINDOW_INT_ACCESSOR(width, "@width")
+WINDOW_INT_ACCESSOR(height, "@height")
+WINDOW_INT_ACCESSOR(opacity, "@opacity")
+WINDOW_INT_ACCESSOR(z, "@z")
+
+/// Window#visible / #visible= — boolean.
+static mrb_value mrb_window_get_visible(mrb_state *mrb, mrb_value self) {
+  return mrb_iv_get(mrb, self, mrb_intern_lit(mrb, "@visible"));
+}
+
+static mrb_value mrb_window_set_visible(mrb_state *mrb, mrb_value self) {
+  mrb_bool v;
+  mrb_get_args(mrb, "b", &v);
+  mrb_iv_set(mrb, self, mrb_intern_lit(mrb, "@visible"),
+             v ? mrb_true_value() : mrb_false_value());
+  window_fire_render(mrb, self);
+  return mrb_bool_value(v);
+}
+
+/// Window#windowskin / #windowskin= — image path (stored, not yet rendered).
+static mrb_value mrb_window_get_windowskin(mrb_state *mrb, mrb_value self) {
+  return mrb_iv_get(mrb, self, mrb_intern_lit(mrb, "@windowskin"));
+}
+
+static mrb_value mrb_window_set_windowskin(mrb_state *mrb, mrb_value self) {
+  mrb_value v;
+  mrb_get_args(mrb, "o", &v);
+  mrb_iv_set(mrb, self, mrb_intern_lit(mrb, "@windowskin"), v);
+  window_fire_render(mrb, self);
+  return v;
+}
+
+/// Window#contents / #contents= — text contents (M6.4 simplified: String).
+static mrb_value mrb_window_get_contents(mrb_state *mrb, mrb_value self) {
+  return mrb_iv_get(mrb, self, mrb_intern_lit(mrb, "@contents"));
+}
+
+static mrb_value mrb_window_set_contents(mrb_state *mrb, mrb_value self) {
+  mrb_value v;
+  mrb_get_args(mrb, "o", &v);
+  if (mrb_string_p(v)) {
+    mrb_iv_set(mrb, self, mrb_intern_lit(mrb, "@contents"), v);
+  } else {
+    mrb_iv_set(mrb, self, mrb_intern_lit(mrb, "@contents"),
+               mrb_str_new_cstr(mrb, ""));
+  }
+  window_fire_render(mrb, self);
+  return v;
+}
+
+/// Window#refresh — forces a render callback (used after batch updates).
+static mrb_value mrb_window_refresh(mrb_state *mrb, mrb_value self) {
+  window_fire_render(mrb, self);
+  return self;
+}
+
+// ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
 
@@ -91,6 +227,50 @@ void mrb_define_sprite_class(mrb_state *mrb,
   mrb_define_method(mrb, sprite_class, "bitmap=", mrb_sprite_set_bitmap,
                     MRB_ARGS_REQ(1));
   mrb_define_method(mrb, sprite_class, "bitmap", mrb_sprite_get_bitmap,
+                    MRB_ARGS_NONE());
+}
+
+void mrb_define_window_class(mrb_state *mrb,
+                             WindowRenderCallback window_callback) {
+  g_window_callback = window_callback;
+
+  struct RClass *window_class =
+      mrb_define_class(mrb, "Window", mrb->object_class);
+  MRB_SET_INSTANCE_TT(window_class, MRB_TT_OBJECT);
+
+  mrb_define_method(mrb, window_class, "initialize", mrb_window_initialize,
+                    MRB_ARGS_OPT(4));
+  mrb_define_method(mrb, window_class, "x", mrb_window_get_x, MRB_ARGS_NONE());
+  mrb_define_method(mrb, window_class, "x=", mrb_window_set_x, MRB_ARGS_REQ(1));
+  mrb_define_method(mrb, window_class, "y", mrb_window_get_y, MRB_ARGS_NONE());
+  mrb_define_method(mrb, window_class, "y=", mrb_window_set_y, MRB_ARGS_REQ(1));
+  mrb_define_method(mrb, window_class, "width", mrb_window_get_width,
+                    MRB_ARGS_NONE());
+  mrb_define_method(mrb, window_class, "width=", mrb_window_set_width,
+                    MRB_ARGS_REQ(1));
+  mrb_define_method(mrb, window_class, "height", mrb_window_get_height,
+                    MRB_ARGS_NONE());
+  mrb_define_method(mrb, window_class, "height=", mrb_window_set_height,
+                    MRB_ARGS_REQ(1));
+  mrb_define_method(mrb, window_class, "opacity", mrb_window_get_opacity,
+                    MRB_ARGS_NONE());
+  mrb_define_method(mrb, window_class, "opacity=", mrb_window_set_opacity,
+                    MRB_ARGS_REQ(1));
+  mrb_define_method(mrb, window_class, "visible", mrb_window_get_visible,
+                    MRB_ARGS_NONE());
+  mrb_define_method(mrb, window_class, "visible=", mrb_window_set_visible,
+                    MRB_ARGS_REQ(1));
+  mrb_define_method(mrb, window_class, "z", mrb_window_get_z, MRB_ARGS_NONE());
+  mrb_define_method(mrb, window_class, "z=", mrb_window_set_z, MRB_ARGS_REQ(1));
+  mrb_define_method(mrb, window_class, "windowskin", mrb_window_get_windowskin,
+                    MRB_ARGS_NONE());
+  mrb_define_method(mrb, window_class, "windowskin=", mrb_window_set_windowskin,
+                    MRB_ARGS_REQ(1));
+  mrb_define_method(mrb, window_class, "contents", mrb_window_get_contents,
+                    MRB_ARGS_NONE());
+  mrb_define_method(mrb, window_class, "contents=", mrb_window_set_contents,
+                    MRB_ARGS_REQ(1));
+  mrb_define_method(mrb, window_class, "refresh", mrb_window_refresh,
                     MRB_ARGS_NONE());
 }
 

@@ -1,4 +1,4 @@
-import XCTest
+    import XCTest
 @testable import RPGPlayer
 
 /// Unit test cho M6.2 — Game_* runtime classes (GameClasses.rb).
