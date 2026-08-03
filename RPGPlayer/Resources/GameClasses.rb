@@ -397,6 +397,12 @@ end
    attr_accessor :map_data
    attr_accessor :display_x
    attr_accessor :display_y
+   # M6.5: tham chiếu player + interpreter event (RGSS3: Game_Map quản lý
+   # 1 interpreter cho event actions).
+   attr_accessor :player
+   attr_accessor :interpreter
+   attr_accessor :starting_pos
+   attr_accessor :common_events
 
    # Hằng số flag tileset (RGSS3: bit 0 = impassable, bit 1 = bush, ...)
    FLAG_IMPASSABLE = 0x01
@@ -410,6 +416,10 @@ end
      @map_data = nil
      @display_x = 0
      @display_y = 0
+     @player = nil
+     @interpreter = nil
+     @starting_pos = nil
+     @common_events = {}
    end
 
    # Setup map từ RPG::Map + RPG::Tileset (bản tối thiểu M6.2).
@@ -468,6 +478,74 @@ end
 
   def update
     @events.each_value(&:update)
+    setup_starting_event
+  end
+
+  # ── M6.5: vị trí bắt đầu player trong map (từ RPG::System hoặc test) ──
+  def setup_player_start
+    return unless @player
+    return unless @starting_pos
+    @player.x = @starting_pos[0]
+    @player.y = @starting_pos[1]
+    @player.real_x = @starting_pos[0]
+    @player.real_y = @starting_pos[1]
+    if @starting_pos.size > 2 && @starting_pos[2].to_i != 0
+      @player.direction = @starting_pos[2].to_i
+    end
+    @starting_pos = nil
+  end
+
+  # ── M6.5: event at same tile as player (touch trigger) ──
+  def check_event_trigger_here(triggers)
+    return unless @player
+    return [] unless triggers
+    @events.each_value.map do |event|
+      next unless active_event?(event, triggers)
+      next unless event.x == @player.x && event.y == @player.y
+      event.starting = true
+      event
+    end.compact
+  end
+
+  # ── M6.5: event tại ô player đang đối diện (action button trigger) ──
+  def check_event_trigger_there(triggers)
+    return unless @player
+    return [] unless triggers
+    dx = 0
+    dy = 0
+    case @player.direction
+    when 2 then dy = 1   # DOWN
+    when 4 then dx = -1  # LEFT
+    when 6 then dx = 1   # RIGHT
+    when 8 then dy = -1  # UP
+    end
+    @events.each_value.map do |event|
+      next unless active_event?(event, triggers)
+      next unless event.x == @player.x + dx && event.y == @player.y + dy
+      event.starting = true
+      event
+    end.compact
+  end
+
+  def active_event?(event, triggers)
+    return false if event.erased
+    return false if event.through
+    # Chỉ kích hoạt event có page đang active (page_index != -1)
+    return false if event.page_index < 0
+    triggers.include?(event.trigger)
+  end
+
+  # ── M6.5: chạy interpreter cho event starting đầu tiên ──
+  def setup_starting_event
+    return unless @interpreter
+    return if @interpreter.running?
+    @events.each_value do |event|
+      next unless event.starting
+      @interpreter.setup(event.list, event.event_id)
+      @interpreter.map_id = @map_id
+      event.starting = false
+      return
+    end
   end
 end
 
@@ -508,6 +586,22 @@ class Game_Player < Game_Character
 
   def update
     move_by_input
+    check_event_trigger_touch([1, 2])
+    check_action_event
+  end
+
+  # ── M6.5: touch trigger (event cùng ô khi player bước vào) ──
+  def check_event_trigger_touch(triggers)
+    return if $game_map.nil?
+    $game_map.check_event_trigger_here(triggers)
+  end
+
+  # ── M6.5: action button (nhấn C — RGSS Input::C = confirm) ──
+  def check_action_event
+    return if $game_map.nil?
+    return unless Input.trigger?(Input::C)
+    $game_map.check_event_trigger_here([2])
+    $game_map.check_event_trigger_there([0, 1, 2])
   end
 end
 
@@ -520,22 +614,36 @@ class Game_Event < Game_Character
   attr_accessor :trigger
   attr_accessor :list
   attr_accessor :starting
+  attr_accessor :page_index
+  attr_accessor :erased
+  attr_accessor :event_data
 
   def initialize(event_data)
     super()
+    @event_data = event_data
     @event_id = event_data.id
     @x = event_data.x
     @y = event_data.y
     @starting = false
+    @erased = false
+    @page_index = -1
     @trigger = 0
     @list = []
+    refresh
+  end
 
-    # Dùng page đầu tiên có điều kiện thoả (bản tối thiểu: page 0 luôn dùng).
-    # Guard: RPG::Event.pages có thể nil nếu event chưa được load đầy đủ
-    # (test dùng RPG::Event.new trần). Bản tối thiểu M6.2 — bỏ qua an toàn.
-    pages = event_data.respond_to?(:pages) ? event_data.pages : nil
-    page = pages ? pages[0] : nil
-    if page
+  # ── M6.5: chọn page hoạt động (page cuối có điều kiện thoả — RGSS3) ──
+  def refresh
+    pages = @event_data.respond_to?(:pages) ? @event_data.pages : nil
+    new_index = -1
+    if pages && !@erased
+      pages.each_with_index do |page, i|
+        new_index = i if page_condition_met?(page)
+      end
+    end
+    @page_index = new_index
+    if @page_index >= 0
+      page = pages[@page_index]
       @trigger = page.trigger
       @list = page.list
       @move_speed = page.move_speed
@@ -546,7 +654,49 @@ class Game_Event < Game_Character
       @step_anime = page.step_anime
       @direction_fix = page.direction_fix
       @move_route = page.move_route
+      if @move_route
+        @move_route_index = 0
+      end
+    else
+      @trigger = 0
+      @list = []
     end
+  end
+
+  # ── M6.5: điều kiện page (2 switch + 1 variable + self switch — RGSS3) ──
+  def page_condition_met?(page)
+    cond = page.condition
+    return true unless cond
+    if cond.switch1_valid
+      return false unless $game_switches && $game_switches[cond.switch1_id]
+    end
+    if cond.switch2_valid
+      return false unless $game_switches && $game_switches[cond.switch2_id]
+    end
+    if cond.variable_valid
+      return false unless $game_variables
+      actual = $game_variables[cond.variable_id]
+      want = cond.variable_value
+      comparison = cond.respond_to?(:variable_compare) ? cond.variable_compare : nil
+      if comparison
+        case comparison
+        when 1 then return false unless actual != want
+        when 2 then return false unless actual >= want
+        when 3 then return false unless actual <= want
+        when 4 then return false unless actual > want
+        when 5 then return false unless actual < want
+        else return false unless actual == want
+        end
+      else
+        return false unless actual == want
+      end
+    end
+    if cond.self_switch_valid
+      return false unless $game_self_switches
+      key = "#{$game_map ? $game_map.map_id : 0},#{@event_id},#{cond.self_switch_ch}"
+      return false unless $game_self_switches[key]
+    end
+    true
   end
 
   # Override passable? — event không chặn event khác (chỉ chặn player)
@@ -555,6 +705,7 @@ class Game_Event < Game_Character
   end
 
   def update
+    refresh if @page_index < 0 || @starting
     update_move_route if @move_route
   end
 end
@@ -673,4 +824,20 @@ class Game_Party
   def all_dead?
     @actors.all?(&:dead?)
   end
+end
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Per-frame hook — gọi từ Swift (RubyBridge.advanceFrame → mrb_bridge_call_global)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def rpg_player_advance_frame
+  map = $game_map
+  if map
+    map.update
+    player = map.player
+    player.update if player
+  end
+  interp = $game_interpreter
+  interp.update if interp && interp.running?
+  true
 end

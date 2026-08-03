@@ -194,6 +194,10 @@ final class RubyBridge {
         // ---------------------------------------------------------------------------
         loadGameClasses(into: mrbPtr)
         loadWindowClasses(into: mrbPtr)
+        // M6.5: Load Event classes (Game_Interpreter/Game_Message) — cần cho
+        // interpreter event map. Load sau WindowClasses (Window_Message có thể
+        // được dùng trong interpreter), trước Scripts.rvdata2.
+        loadEventClasses(into: mrbPtr)
 
         // ---------------------------------------------------------------------------
         // Execute scripts in order
@@ -351,6 +355,32 @@ final class RubyBridge {
         }
     }
 
+    /// M6.5: Load EventClasses.rb (Game_Interpreter/Game_Message) từ bundle vào VM.
+    /// Load sau WindowClasses.rb (interpreters dùng Window_Message), trước
+    /// Scripts.rvdata2. Nếu không tìm thấy → log ⚠️ (không dừng VM).
+    private func loadEventClasses(into mrbPtr: UnsafeMutablePointer<mrb_state>) {
+        guard let url = Bundle(for: RubyBridge.self).url(forResource: "EventClasses", withExtension: "rb"),
+              let source = try? String(contentsOf: url, encoding: .utf8) else {
+            print("[RubyBridge] ⚠️  Không tìm thấy EventClasses.rb trong bundle")
+            return
+        }
+
+        var cBytes = source.utf8CString
+        let rc = cBytes.withUnsafeBufferPointer { buf in
+            var isSyntax = 0
+            let rc = mrb_bridge_load_nstring(mrbPtr, buf.baseAddress, buf.count - 1, &isSyntax)
+            lastSyntaxFlag = isSyntax != 0
+            return rc
+        }
+
+        if rc == 0 {
+            print("[RubyBridge] ✅ Event classes loaded (EventClasses.rb)")
+        } else {
+            let err = String(cString: mrb_bridge_last_error(mrbPtr))
+            print("[RubyBridge] ⚠️  EventClasses.rb load \(lastSyntaxFlag ? "SYNTAX" : "runtime") error: \(err)")
+        }
+    }
+
     /// M6.4: Load WindowClasses.rb (Window_Base/Window_Message/Window_Selectable)
     /// từ bundle vào VM. Load sau GameClasses.rb, trước Scripts.rvdata2.
     /// Dùng Bundle(for:) thay vì Bundle.main (giống loadGameClasses).
@@ -442,6 +472,8 @@ final class RubyBridge {
           // Load Game_* runtime classes (M6.2)
           loadGameClasses(into: mrbPtr)
           loadWindowClasses(into: mrbPtr)
+          // M6.5: Load Event classes (Game_Interpreter/Game_Message) cho unit test
+          loadEventClasses(into: mrbPtr)
           return true
     }
 
