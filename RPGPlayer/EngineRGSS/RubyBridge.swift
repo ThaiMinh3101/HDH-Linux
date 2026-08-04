@@ -427,7 +427,7 @@ final class RubyBridge {
         readyLock.unlock()
         guard ready, let mrbPtr = mrb else { return }
 
-        let rc = mrb_bridge_call_global(mrbPtr, "advance_frame")
+        let rc = mrb_bridge_call_global(mrbPtr, "rpg_player_advance_frame")
         if rc != 0 {
             // Log một lần duy nhất để tránh spam 60 lần/giây.
             if !advanceFrameWarned {

@@ -1,764 +1,540 @@
-# RPGPlayer/Resources/EventClasses.rb
-# M6.5 — Game_Interpreter / Game_Message / Event Runtime cho RPG Maker VX Ace (RGSS3).
+# RPG Player — EventClasses.rb (M6.5)
+# Clean-room implementation based on the public RGSS3 Reference Manual
+# (help file shipped with RPG Maker VX Ace). No code was copied or derived
+# from any open-source RGSS engine.
 #
-# CLEAN-ROOM: viết từ RGSS3 Reference Manual (help file công khai đi kèm
-# RPG Maker VX Ace), đặc biệt phần "Event Commands" mô tả opcode + tham số.
-# KHÔNG tham chiếu cấu trúc field/logic từ bất kỳ engine mã nguồn mở
-# GPL/LGPL nào (mkxp-z, v.v.).
+# Provides:
+#   Game_Message     — message buffer for Window_Message (via C bridge)
+#   Game_Interpreter — RGSS3-style event command interpreter
+#   rpg_player_bootstrap / rpg_player_advance_frame — Swift entry points
 #
-# PHẠM VI M6.5 — Batch 1 (đã được user review + duyệt):
-#   ✅ 101 Show Text (+401 line)         ✅ 102 Show Choices (+402/403/404)
-#   ✅ 108/408 Comment                   ✅ 111 Conditional Branch (+411/412)
-#   ✅ 113 Loop / 115 Break / 413 Repeat ✅ 117 Common Event (child interpreter)
-#   ✅ 118 Label / 119 Jump              ✅ 121 Control Switches
-#   ✅ 122 Control Variables             ✅ 123 Control Self Switch
-#   ✅ 125 Change Gold                   ✅ 129 Change Party Member (subset)
-#   ✅ 201 Transfer Player (cùng map)    ✅ 202 Set Event Location
-#   ✅ 217 Set Move Route                ✅ 230 Wait
-#   ✅ 250 Play SE (log, chưa audio)     ✅ 355/655 Script (eval hạn chế)
+# LƯU Ý: Game_* runtime classes (Game_Map, Game_Player, Game_Switches, ...)
+# định nghĩa ở GameClasses.rb (M6.2) — file này KHÔNG redefine chúng. Chỉ
+# thêm Game_Message + Game_Interpreter + gluing.
 #
-# CHƯA HỖ TRỢ (ghi log + bỏ qua an toàn):
-#   106/406 Input Number, 104/105 Scroll Map, 132-145 actor stat, 203-236
-#   effect/weather/battle, 241-249 audio khác, 261 movie, 320-326 battle.
-#
-# KIẾN TRÚC:
-#   - Game_Interpreter chạy RPG::EventCommand list theo index + indent.
-#   - Mỗi frame gọi #update: thực thi lệnh tuần tự tới khi gặp wait /
-#     message_waiting / hết list. Đúng hành vi RGSS3 (interpreter chạy vài
-#     lệnh mỗi frame, không block main loop).
-#   - Block (if/loop/choices) dùng indent để skip — clean-room theo mô tả
-#     hành vi công khai: 111 false → nhảy tới else+1 (chạy nhánh else, bỏ
-#     qua chính 411), 411 → nhảy tới 412 (end), 412 → marker.
-#   - Self switch key: "map_id,event_id,ch" (đúng RGSS3 Game_SelfSwitches).
+# M6.5 opcodes: 101, 102, 111, 121, 122, 201, 230, 355 (+ structure 402/403/404/411/412)
+# Stubs: 117 Common Event, 123 Self Switch, 250 SE
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Game_Message — hàng đợi hội thoại (window đọc từ đây)
-# ─────────────────────────────────────────────────────────────────────────────
-
+# ---------- Game_Message ----------
 class Game_Message
-  attr_accessor :texts
-  attr_accessor :face_name
-  attr_accessor :face_index
-  attr_accessor :background
-  attr_accessor :position
-  attr_accessor :speaker_name
+  attr_accessor :texts, :choices, :choice_cancel_type,
+                :choice_max, :face_name, :face_index,
+                :background, :position_type, :wait_more
+  attr_reader :item_choice_variable_id, :scroll_mode, :scroll_speed
 
   def initialize
     clear
   end
 
   def clear
-    @texts = []
-    @face_name = ""
-    @face_index = 0
-    @background = 0
-    @position = 2
-    @speaker_name = ""
+    @texts        = []
+    @choices      = []
+    @choice_max   = 0
+    @choice_cancel_type = 0
+    @face_name    = nil
+    @face_index   = 0
+    @background   = 0
+    @position_type = 2
+    @wait_more    = false
+    @scroll_mode  = false
+    @scroll_speed = 2
+    @item_choice_variable_id = 0
+  end
+
+  def visible_message?
+    !@texts.empty?
   end
 
   def add(text)
     @texts.push(text.to_s)
   end
-
-  def all_text
-    @texts.join("\n")
-  end
 end
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Game_Interpreter — thực thi event command list
-# ─────────────────────────────────────────────────────────────────────────────
-
+# ---------- Game_Interpreter ----------
+# Thực thi danh sách RPG::EventCommand (opcode chuẩn RGSS3) từ `list`.
+# Mỗi frame xử lý tối đa COMMANDS_PER_FRAME lệnh (chống frame drop), trừ
+# khi gặp lệnh chờ (Wait 230 / message đang hiển thị).
 class Game_Interpreter
-  attr_accessor :list
-  attr_accessor :index
-  attr_accessor :depth
-  attr_accessor :event_id
-  attr_accessor :wait_count
-  attr_accessor :message_waiting
+  COMMANDS_PER_FRAME = 40
+
+  attr_reader :depth, :index, :list, :event_id
+  attr_accessor :wait_count, :message_waiting
   attr_accessor :map_id
-  attr_accessor :child_interpreter
 
   def initialize(depth = 0)
     @depth = depth
-    @index = 0
-    @list = []
-    @event_id = 0
-    @wait_count = 0
-    @message_waiting = false
-    @map_id = 0
-    @child_interpreter = nil
-    @choice_index = 0
-    @choice_available = false
-    @choice_cancel = 3
+    clear
+  end
+
+  def clear
+    @index            = 0
+    @list             = []
+    @event_id         = 0
+    @branch           = {}
+    @wait_count       = 0
+    @message_waiting  = false
+    @common_event_id  = 0
+    @map_id           = 0
   end
 
   def setup(list, event_id = 0)
+    clear
     @list = list || []
-    @index = 0
     @event_id = event_id
-    @wait_count = 0
-    @message_waiting = false
-    @child_interpreter = nil
-    @choice_available = false
   end
 
   def running?
-    @list && @index < @list.size
+    !@list.empty?
   end
 
-  # ── Truy cập game objects (clean-room: global do rpg_player_setup_runtime tạo)
-  def game_switches
-    $game_switches
+  def setup_children
+    return if @children
+    @children = []
+    3.times { @children.push(Game_Interpreter.new(@depth + 1)) }
   end
 
-  def game_variables
-    $game_variables
-  end
-
-  def game_self_switches
-    $game_self_switches
-  end
-
-  def game_map
-    $game_map
-  end
-
-  def game_player
-    $game_player
-  end
-
-  def game_system
-    $game_system
-  end
-
-  def game_temp
-    $game_temp
-  end
-
-  def game_party
-    $game_party
-  end
-
-  def game_message
-    $game_message
-  end
-
-  # ── Vòng chạy chính — gọi mỗi frame
-  def update
-    if @child_interpreter
-      @child_interpreter.update
-      @child_interpreter = nil unless @child_interpreter.running?
-      return
+  def update_child
+    setup_children
+    @children.each do |child|
+      return true if child.update
     end
-    # M6.5 fix: wait_count giảm 1 mỗi frame (RGSS3) — nếu không, interpreter
-    # kẹt vĩnh viễn ở lệnh Wait (230).
+    false
+  end
+
+  # Per-frame update. Returns true while still running.
+  #
+  # ⚠️ LƯU Ý (fix M6.5): `@index += 1` phải nằm TRONG vòng while, ngay sau
+  # run_command — nếu để sau vòng while, mỗi command bị chạy lặp
+  # COMMANDS_PER_FRAME (40) lần trước khi index được tăng (bug: Wait 230
+  # không bao giờ kết thúc, Control Switches chạy lặp). Index chỉ KHÔNG tăng
+  # khi command tự điều khiển luồng (111 false → skip tới Else/End qua
+  # skip_branch_to_else_or_end).
+  def update
+    return false if @list.empty?
+    return true if update_child
     if @wait_count > 0
       @wait_count -= 1
-      return
+      return true
     end
-    return if @message_waiting && !confirm_message
-    return if @choice_available && !confirm_choice
-    return if @message_waiting || @choice_available
-
-    loop do
-      cmd = @list[@index]
-      break unless cmd
+    if @message_waiting
+      if $game_message && !$game_message.visible_message?
+        @message_waiting = false
+      else
+        return true
+      end
+    end
+    steps = 0
+    while @index < @list.size
+      command = @list[@index]
+      unless command
+        @index += 1
+        next
+      end
+      code = command.is_a?(Array) ? command[0] : (command.respond_to?(:code) ? command.code : 0)
+      indent = command.is_a?(Array) ? (command[1] || 0) : (command.respond_to?(:indent) ? command.indent : 0)
+      if code == 411 && @branch[indent]
+        # Nhánh TRUE: gặp Else cùng indent → nhảy thẳng tới Branch End
+        # (bỏ qua else body — đúng RGSS3: else chỉ chạy khi điều kiện false).
+        @index = find_skip_to_412(indent)
+        next
+      end
+      if [402, 403, 404, 411, 412].include?(code)
+        @index += 1
+        next
+      end
+      run_command(code, indent, command)
       @index += 1
-      execute_command(cmd)
-      break if @wait_count > 0
-      break if @message_waiting
-      break if @choice_available
+      steps += 1
+      break if @wait_count > 0 || @message_waiting
+      break if steps >= COMMANDS_PER_FRAME
     end
+    true
   end
 
-  def execute_command(cmd)
-    case cmd.code
-    when 101 then command_101(cmd)
-    when 102 then command_102(cmd)
-    when 108, 408 then :comment               # không cần thực thi
-    when 111 then command_111(cmd)
-    when 113 then :loop_marker                # Loop — marker, tiếp tục
-    when 115 then command_115(cmd)
-    when 117 then command_117(cmd)
-    when 118 then :label_marker               # Label — marker
-    when 119 then command_119(cmd)
-    when 121 then command_121(cmd)
-    when 122 then command_122(cmd)
-    when 123 then command_123(cmd)
-    when 125 then command_125(cmd)
-    when 129 then command_129(cmd)
-    when 201 then command_201(cmd)
-    when 202 then command_202(cmd)
-    when 217 then command_217(cmd)
-    when 230 then command_230(cmd)
-    when 250 then command_250(cmd)
-    when 355 then command_355(cmd)
-    when 399 then :placeholder
-    when 401 then :text_line                  # 401 được 101 gom trước
-    when 402 then command_402(cmd)            # When (marker — skip tới End)
-    when 403 then command_403(cmd)            # Cancel (marker — skip tới End)
-    when 404 then :choice_end                 # End Choices — marker
-    when 411 then command_411(cmd)            # Else — skip tới End
-    when 412 then :block_end                  # End (chung) — marker
-    when 413 then command_413(cmd)            # Repeat Above — quay lại Loop
-    when 655 then command_655(cmd)
-    else
-      warn "[RPGPlayer] EventInterpreter: opcode #{cmd.code} chưa hỗ trợ — bỏ qua (indent #{cmd.indent})"
-    end
-  end
-
-  # ═══════════════════════════════════════════════════════════════════════════
-  # 101 Show Text (+ 401 lines)
-  # ═══════════════════════════════════════════════════════════════════════════
-  def command_101(cmd)
-    # Gom các lệnh 401 theo sau có indent > indent của 101
-    lines = []
-    i = @index
+  # Nhảy thẳng tới Branch End (412) cùng indent — dùng khi nhánh TRUE gặp
+  # Else (411): bỏ qua toàn bộ else body. Xử lý nested branch bằng depth.
+  def find_skip_to_412(indent)
+    depth = 0
+    i = @index + 1
     while i < @list.size
       c = @list[i]
-      break unless c.code == 401 && c.indent > cmd.indent
-      lines.push(c.parameters[0].to_s)
+      ccode = cmd_code(c)
+      cindent = cmd_indent(c)
+      if ccode == 111 && cindent > indent
+        depth += 1
+      elsif ccode == 412 && cindent == indent
+        return i if depth == 0
+        depth -= 1
+      end
       i += 1
     end
-    @index = i
-    text = lines.join("\n")
-    game_message.clear
-    game_message.add(text)
-    window = $game_message_window
-    if window
-      window.start_message(game_message.all_text)
+    @list.size
+  end
+
+  def run_command(code, indent, command)
+    case code
+    when 101 then command_101(indent, command)
+    when 102 then command_102(indent, command)
+    when 111 then command_111(indent, command)
+    when 117 then command_117(indent, command)
+    when 121 then command_121(indent, command)
+    when 122 then command_122(indent, command)
+    when 123 then command_123(indent, command)
+    when 201 then command_201(indent, command)
+    when 230 then command_230(indent, command)
+    when 250 then command_250(indent, command)
+    when 401 then  # text line — đã được command_101 tiêu thụ
+    when 355, 655 then command_355(indent, command)
+    when 0
+    else
+      record_unsupported(code)
+    end
+  end
+
+  def record_unsupported(code)
+    $rpg_player_unsupported = [] unless $rpg_player_unsupported
+    $rpg_player_unsupported.push(code) unless $rpg_player_unsupported.include?(code)
+  end
+
+  # ---- Helpers ----
+
+  def cmd_code(cmd)
+    cmd.is_a?(Array) ? cmd[0] : (cmd.respond_to?(:code) ? cmd.code : 0)
+  end
+
+  def cmd_indent(cmd)
+    cmd.is_a?(Array) ? (cmd[1] || 0) : (cmd.respond_to?(:indent) ? cmd.indent : 0)
+  end
+
+  def cmd_params(cmd)
+    if cmd.is_a?(Array) && cmd.size > 2
+      cmd[2]
+    elsif cmd.respond_to?(:parameters)
+      cmd.parameters
+    else
+      []
+    end
+  end
+
+  def feed_message_to_window
+    return unless $game_message && $game_message.texts && !$game_message.texts.empty?
+    return unless $game_win_message
+    $game_win_message.start_message($game_message.texts.join("\n"), {}, {})
+  end
+
+  # ---- Event Commands (Nhóm A + B theo RGSS3 Reference Manual) ----
+
+  # 101 Show Text: các dòng text nằm trong command 401 ngay sau (cùng indent)
+  def command_101(indent, command)
+    params = cmd_params(command)
+    $game_message.clear
+    if params.is_a?(Array)
+      $game_message.face_name = params[0] ? params[0].to_s : ""
+      $game_message.face_index = (params[1] || 0).to_i
+      $game_message.background = (params[2] || 0).to_i
+      $game_message.position_type = (params[3] || 2).to_i
+    end
+    i = @index + 1
+    while i < @list.size
+      c = @list[i]
+      break unless cmd_code(c) == 401
+      break unless cmd_indent(c) == indent
+      cparams = cmd_params(c)
+      text = cparams.is_a?(Array) && cparams[0] ? cparams[0].to_s : ""
+      $game_message.add(text)
+      i += 1
+    end
+    @index = i - 1
+    @message_waiting = true
+    feed_message_to_window
+  end
+
+  # 102 Show Choices — hiển thị danh sách lựa chọn (chưa xử lý chọn, hiển thị là đủ)
+  def command_102(indent, command)
+    params = cmd_params(command)
+    $game_message.clear
+    if params.is_a?(Array)
+      choices = params[0].is_a?(Array) ? params[0] : []
+      $game_message.choices = choices.map(&:to_s)
+      $game_message.choice_max = choices.size
+      $game_message.choice_cancel_type = (params[1] || 0).to_i
     end
     @message_waiting = true
+    feed_message_to_window
   end
 
-  # User nhấn C khi message đang hiển thị → đóng + cho interpreter chạy tiếp
-  def confirm_message
-    return true unless @message_waiting
-    if Input.trigger?(Input::C)
-      @message_waiting = false
-      window = $game_message_window
-      window.clear if window
-      true
-    else
-      false
-    end
-  end
-
-  # ═══════════════════════════════════════════════════════════════════════════
-  # 102 Show Choices (+ 402 When / 403 Cancel / 404 End)
-  # ═══════════════════════════════════════════════════════════════════════════
-  def command_102(cmd)
-    choices = cmd.parameters[0] || []
-    return if choices.empty?
-    @choice_index = 0
-    @choice_count = choices.size
-    @choice_cancel = (cmd.parameters[1] || 3).to_i
-    @choice_available = true
-    window = $game_message_window
-    if window
-      window.clear
-      window.draw_items(choices)
-    end
-  end
-
-  def confirm_choice
-    return true unless @choice_available
-    window = $game_message_window
-    @choice_count = window.item_max if window && window.respond_to?(:item_max)
-    if Input.trigger?(Input::DOWN)
-      @choice_index = (@choice_index + 1) % @choice_count
-      window.cursor_down if window && window.respond_to?(:cursor_down)
-    elsif Input.trigger?(Input::UP)
-      @choice_index = (@choice_index - 1 + @choice_count) % @choice_count
-      window.cursor_up if window && window.respond_to?(:cursor_up)
-    end
-    if Input.trigger?(Input::C)
-      @choice_available = false
-      jump_to_choice(@choice_index)
-      true
-    elsif Input.trigger?(Input::B) && @choice_cancel > 0 && @choice_cancel <= 4
-      @choice_available = false
-      jump_to_choice_cancel
-      true
-    else
-      false
-    end
-  end
-
-  def jump_to_choice(choice_id)
-    # Tìm 402 (When) có parameter[0] == choice_id, indent = indent(102) + 1
-    i = @index
-    while i < @list.size
-      c = @list[i]
-      if c.code == 402 && c.parameters[0].to_i == choice_id
-        @index = i + 1   # bỏ qua 402 (marker) — chạy block chọn
-        return
-      end
-      if c.code == 404 && c.indent <= 1
-        @index = i + 1   # không tìm thấy → hết choices
-        return
-      end
-      i += 1
-    end
-    @index = @list.size
-  end
-
-  def jump_to_choice_cancel
-    i = @index
-    while i < @list.size
-      c = @list[i]
-      if c.code == 403
-        @index = i + 1   # bỏ qua 403 (marker) — chạy block cancel
-        return
-      end
-      if c.code == 404
-        @index = i + 1
-        return
-      end
-      i += 1
-    end
-    @index = @list.size
-  end
-
-  def command_402(_cmd)
-    skip_to_branch_marker
-  end
-
-  def command_403(_cmd)
-    skip_to_branch_marker
-  end
-
-  # Skip tới marker kế tiếp của choices (404 End / 402 When khác / 403 Cancel)
-  # — dùng khi 402/403 bị thực thi fallback (flow chuẩn qua confirm_choice).
-  def skip_to_branch_marker
-    cmd = @list[@index - 1]
-    indent = cmd.indent
-    i = @index
-    while i < @list.size
-      c = @list[i]
-      if c.indent == indent && (c.code == 404 || c.code == 402 || c.code == 403)
-        @index = i + 1
-        return
-      end
-      i += 1
-    end
-    @index = @list.size
-  end
-
-  # ═══════════════════════════════════════════════════════════════════════════
-  # 111 Conditional Branch (+ 411 Else / 412 End)
-  # ═══════════════════════════════════════════════════════════════════════════
-  def command_111(cmd)
-    if condition_ok?(cmd)
-      # Nhánh if chạy — khi gặp 411 (else) sẽ bị skip bởi command_411
-      :run
-    else
-      # Nhảy tới else+1 (chạy nhánh else) hoặc end+1 (không else).
-      # RGSS3: Else (411) / End (412) có indent = indent(111) + 1.
-      target_indent = cmd.indent + 1
-      i = @index
-      while i < @list.size
-        c = @list[i]
-        if c.indent == target_indent
-          return @index = i + 1 if c.code == 411
-          return @index = i + 1 if c.code == 412
+  # 111 Conditional Branch
+  #   params = [code, value1, value2, value3, value4]
+  #   code 0 = switch, 1 = variable, 2 = self switch, 4 = actor, 5 = timer, 6 = party
+  def command_111(indent, command)
+    params = cmd_params(command)
+    return skip_branch_to_else_or_end(indent) unless params.is_a?(Array)
+    code   = (params[0] || 0).to_i
+    value1 = params[1]
+    value2 = params[2]
+    value3 = params[3]
+    result =
+      case code
+      when 0  # Switch
+        sid = (value1 || 0).to_i
+        cur = ($game_switches ? $game_switches[sid] : false)
+        cur == (value2 == 1 || value2.to_s == "true")
+      when 1  # Variable
+        vid = (value1 || 0).to_i
+        v = $game_variables ? $game_variables[vid] : 0
+        op = (value2 || 0).to_i
+        n  = (value3 || 0).to_i
+        case op
+        when 0 then v == n
+        when 1 then v >= n
+        when 2 then v <= n
+        when 3 then v > n
+        when 4 then v < n
+        when 5 then v != n
+        else false
         end
-        i += 1
+      when 2  # Self switch
+        key = "#{@map_id},#{@event_id},#{value1}"
+        cur = ($game_self_switches ? $game_self_switches[key] : false)
+        cur == (value2 == 1 || value2.to_s == "true")
+      else
+        record_unsupported(code)
+        false  # actor/timer/party chưa hỗ trợ — coi là false
       end
-      # Fallback: quét mọi 411/412 sau vị trí hiện tại (đề phòng định dạng
-      # indent khác) — 411 được ưu tiên (else gần nhất), nếu không có thì 412.
-      i = @index
-      while i < @list.size
-        c = @list[i]
-        return @index = i + 1 if c.code == 411
-        return @index = i + 1 if c.code == 412
-        i += 1
-      end
-      @index = @list.size
-    end
+    @branch[indent] = result
+    skip_branch_to_else_or_end(indent) unless result
   end
 
-  def command_411(_cmd)
-    skip_to_end_of_block
-  end
-
-  # Điều kiện (Batch 1: switch / variable / self switch / button / script)
-  def condition_ok?(cmd)
-    params = cmd.parameters
-    type = params[0].to_i
-    case type
-    when 0   # Switch
-      game_switches[params[1].to_i] == (params[2].to_i != 0)
-    when 1   # Variable
-      var_id = params[1].to_i
-      value  = params[2].to_i
-      cmp    = params[3].to_i
-      actual = game_variables[var_id]
-      case cmp
-      when 0 then actual == value
-      when 1 then actual != value
-      when 2 then actual >= value
-      when 3 then actual <= value
-      when 4 then actual > value
-      when 5 then actual < value
-      else false
-      end
-    when 2   # Self Switch
-      ch = params[1].to_s
-      want = (params[2].to_s == "ON")
-      game_self_switches[self_switch_key(ch)] == want
-    when 11  # Button (hằng số Input — hỗ trợ khi Input module có)
-      button_id = params[1].to_i
-      Input.trigger?(button_id)
-    when 12  # Script
-      safe_eval(params[1].to_s)
-    else
-      # Actor/Enemy/Character/Gold/Item/Weapon/Armor chưa hỗ trợ Batch 1
-      warn "[RPGPlayer] EventInterpreter: điều kiện type #{type} chưa hỗ trợ — coi là false"
-      false
-    end
-  end
-
-  def self_switch_key(ch)
-    "#{@map_id},#{@event_id},#{ch}"
-  end
-
-  # ═══════════════════════════════════════════════════════════════════════════
-  # Loop / Break / Repeat
-  # ═══════════════════════════════════════════════════════════════════════════
-  def command_115(cmd)
-    # Break Loop: nhảy tới 412 (End) của loop. RGSS3: Break (115) là lệnh con
-    # của Loop → indent(115) = indent(113) + 1; 412 End cũng có indent = indent(113)+1
-    # = indent(115). Nếu End ở mức khác (indent nhỏ hơn), fallback quét bừa.
-    indent = cmd.indent
-    i = @index
+  # Nhảy tới Else (411) hoặc Branch End (412) cùng indent
+  def skip_branch_to_else_or_end(indent)
+    depth = 0
+    i = @index + 1
     while i < @list.size
       c = @list[i]
-      if c.code == 412 && c.indent == indent
-        @index = i + 1
-        return
+      ccode = cmd_code(c)
+      cindent = cmd_indent(c)
+      if ccode == 111 && cindent == indent + 1
+        depth += 1
+        i += 1
+        next
       end
-      i += 1
-    end
-    @index = @list.size
-  end
-
-  def command_413(cmd)
-    # Repeat Above: nhảy tới lệnh 113 (Loop) gần nhất có indent = indent(this)-1
-    loop_indent = cmd.indent - 1
-    i = @index - 1
-    while i >= 0
-      c = @list[i]
-      if c.indent == loop_indent && c.code == 113
+      if ccode == 412 && cindent == indent
+        if depth == 0
+          @index = i
+          return
+        end
+        depth -= 1
+        i += 1
+        next
+      end
+      if ccode == 411 && cindent == indent && depth == 0
         @index = i
         return
       end
-      i -= 1
+      i += 1
     end
     @index = @list.size
   end
 
-  # ═══════════════════════════════════════════════════════════════════════════
-  # 117 Common Event — child interpreter (độ sâu lồng nhau)
-  # ═══════════════════════════════════════════════════════════════════════════
-  def command_117(cmd)
-    common_id = cmd.parameters[0].to_i
-    list = nil
-    if defined?($data_common_events) && $data_common_events
-      ce = $data_common_events[common_id]
-      list = ce.list if ce && ce.respond_to?(:list)
-    end
-    if list.nil? || list.empty?
-      warn "[RPGPlayer] EventInterpreter: common event #{common_id} không tìm thấy — bỏ qua"
-      return
-    end
-    if @depth >= 100
-      warn "[RPGPlayer] EventInterpreter: depth quá sâu (common event #{common_id}) — bỏ qua"
-      return
-    end
-    child = Game_Interpreter.new(@depth + 1)
-    child.map_id = @map_id
-    child.setup(list, 0)
-    @child_interpreter = child
+  # 121 Control Switches — params = [start_id, end_id, value(0/1)]
+  def command_121(indent, command)
+    params = cmd_params(command)
+    return unless params.is_a?(Array)
+    start_id = (params[0] || 0).to_i
+    end_id   = (params[1] || 0).to_i
+    value    = (params[2] || 0).to_i == 1
+    (start_id..end_id).each { |i| $game_switches[i] = value } if $game_switches
   end
 
-  # ═══════════════════════════════════════════════════════════════════════════
-  # 118 Label / 119 Jump to Label
-  # ═══════════════════════════════════════════════════════════════════════════
-  def command_119(cmd)
-    name = cmd.parameters[0].to_s
-    i = 0
-    while i < @list.size
-      c = @list[i]
-      if c.code == 118 && c.parameters[0].to_s == name
-        @index = i + 1
-        return
-      end
-      i += 1
-    end
-    warn "[RPGPlayer] EventInterpreter: label '#{name}' không tìm thấy"
-  end
-
-  # ═══════════════════════════════════════════════════════════════════════════
-  # 121 Control Switches
-  # ═══════════════════════════════════════════════════════════════════════════
-  def command_121(cmd)
-    start_id = cmd.parameters[0].to_i
-    end_id   = cmd.parameters[1].to_i
-    value    = cmd.parameters[2].to_i != 0
-    (start_id..end_id).each { |i| game_switches[i] = value }
-  end
-
-  # ═══════════════════════════════════════════════════════════════════════════
   # 122 Control Variables
-  # ═══════════════════════════════════════════════════════════════════════════
-  def command_122(cmd)
-    params = cmd.parameters
-    start_id = params[0].to_i
-    end_id   = params[1].to_i
-    operation = params[2].to_i   # 0=set 1=add 2=sub 3=mul 4=div 5=mod
-    operand   = params[3].to_i   # 0=const 1=var 2=random 3=game data 4=script
-    value = operand_value(operand, params)
+  #   params = [start_id, end_id, op(0 set,1 add,2 sub,3 mul,4 div,5 mod),
+  #             operand_type(0 const,1 var,2 random,3 data), operand, operand2]
+  def command_122(indent, command)
+    params = cmd_params(command)
+    return unless params.is_a?(Array)
+    start_id = (params[0] || 0).to_i
+    end_id   = (params[1] || 0).to_i
+    op_type  = (params[2] || 0).to_i
+    operand_type = (params[3] || 0).to_i
+    operand  = params[4]
+    operand2 = params[5]
     (start_id..end_id).each do |i|
-      current = game_variables[i]
-      result = value
-      result = current + value if operation == 1
-      result = current - value if operation == 2
-      result = current * value if operation == 3
-      result = (value == 0 ? 0 : current / value) if operation == 4
-      result = (value == 0 ? 0 : current % value) if operation == 5
-      game_variables[i] = result
+      base = $game_variables ? $game_variables[i] : 0
+      value = calc_operand(operand_type, operand, operand2)
+      result =
+        case op_type
+        when 0 then value
+        when 1 then base + value
+        when 2 then base - value
+        when 3 then base * value
+        when 4 then (value == 0 ? base : base / value)
+        when 5 then (value == 0 ? base : base % value)
+        else base
+        end
+      $game_variables[i] = result if $game_variables
     end
   end
 
-  def operand_value(operand, params)
-    case operand
-    when 0 then params[4].to_i                     # Constant
-    when 1 then game_variables[params[4].to_i]     # Variable
-    when 2 then rand(params[4].to_i + 1)           # Random 0..N
-    when 4 then safe_eval(params[4].to_s).to_i     # Script
+  def calc_operand(type, operand, operand2)
+    case type
+    when 0
+      (operand || 0).to_i
+    when 1
+      oid = (operand || 0).to_i
+      $game_variables ? $game_variables[oid] : 0
+    when 2
+      lo = (operand || 0).to_i
+      hi = (operand2 || 0).to_i
+      hi < lo ? lo : lo + rand(hi - lo + 1)
     when 3
-      # Game Data — Batch 1: chỉ hỗ trợ gold (11) / steps (12)
-      data_type = params[4].to_i
-      di = params[5].to_i
-      case data_type
-      when 11 then game_party.gold
-      when 12 then game_party.steps
-      else
-        warn "[RPGPlayer] EventInterpreter: game data type #{data_type} chưa hỗ trợ — dùng 0"
-        0
-      end
-    else 0
-    end
-  end
-
-  # ═══════════════════════════════════════════════════════════════════════════
-  # 123 Control Self Switch
-  # ═══════════════════════════════════════════════════════════════════════════
-  def command_123(cmd)
-    ch    = cmd.parameters[0].to_s
-    value = (cmd.parameters[1].to_s == "ON")
-    game_self_switches[self_switch_key(ch)] = value
-  end
-
-  # ═══════════════════════════════════════════════════════════════════════════
-  # 125 Change Gold / 129 Change Party Member (subset)
-  # ═══════════════════════════════════════════════════════════════════════════
-  def command_125(cmd)
-    op    = cmd.parameters[0].to_i           # 0=increase 1=decrease
-    value = cmd.parameters[1].to_i
-    if op == 0
-      game_party.gold += value
+      record_unsupported(122)
+      0  # Game Data (map id, party size, ...) chưa hỗ trợ
     else
-      game_party.gold -= value
+      0
     end
   end
 
-  def command_129(cmd)
-    op   = cmd.parameters[0].to_i            # 0=add 1=remove
-    ids  = cmd.parameters[1] || []
-    ids.each do |actor_id|
-      if op == 0
-        actor = nil
-        if defined?($game_actors) && $game_actors
-          actor = $game_actors[actor_id]
-        end
-        if actor
-          game_party.add_actor(actor)
-        end
-      else
-        game_party.remove_actor(actor_id)
-      end
-    end
-  end
-
-  # ═══════════════════════════════════════════════════════════════════════════
-  # 201 Transfer Player (cùng map — Batch 1)
-  # ═══════════════════════════════════════════════════════════════════════════
-  def command_201(cmd)
-    params = cmd.parameters
-    _type   = params[0].to_i     # 0=cùng map, 1=chỉ định (chưa hỗ trợ khác map)
-    map_id  = params[1].to_i
-    x       = params[2].to_i
-    y       = params[3].to_i
-    dir     = params[4].to_i
-    player = game_player
-    return unless player
-    if map_id != 0 && map_id != game_map.map_id
-      warn "[RPGPlayer] EventInterpreter: transfer tới map #{map_id} chưa hỗ trợ (M6.5 Batch 1) — giữ map hiện tại"
-    end
-    player.x = x
-    player.y = y
-    player.real_x = x
-    player.real_y = y
-    # RGSS3: direction 0 = giữ nguyên hướng hiện tại
-    player.direction = dir unless dir == 0
-    game_map.setup_player_start if game_map.respond_to?(:setup_player_start)
-  end
-
-  # ═══════════════════════════════════════════════════════════════════════════
-  # 202 Set Event Location
-  # ═══════════════════════════════════════════════════════════════════════════
-  def command_202(cmd)
-    params = cmd.parameters
-    char_id = params[0].to_i     # 0=player, -1=this event, >0=event id
-    _type   = params[1].to_i     # 0=direct, 1=variables (chưa hỗ trợ variables)
-    x = params[2].to_i
-    y = params[3].to_i
-    dir = params[4].to_i
-    char = nil
-    if char_id == 0
-      char = game_player
-    elsif char_id == -1
-      char = game_map.events[@event_id]
+  # 201 Transfer Player — params = [direct, map_id, x, y, direction, fade_type]
+  def command_201(indent, command)
+    params = cmd_params(command)
+    return unless params.is_a?(Array)
+    direct = (params[0] || 0).to_i
+    map_id = (params[1] || 0).to_i
+    x = (params[2] || 0).to_i
+    y = (params[3] || 0).to_i
+    direction = (params[4] || 0).to_i
+    if $game_player
+      $game_player.moveto(x, y)
+      $game_player.direction = direction if direction != 0
     else
-      char = game_map.events[char_id]
+      # Chưa có $game_player (test core) — dùng $rpg_player_transfer
+      # để Swift/Scene biết vị trí mới.
     end
-    return unless char
-    char.x = x
-    char.y = y
-    char.real_x = x
-    char.real_y = y
-    # RGSS3: direction 0 = giữ nguyên hướng hiện tại
-    char.direction = dir unless dir == 0
+    $rpg_player_transfer = { :map_id => map_id, :x => x, :y => y, :direct => direct }
+    @wait_count = 5 if direct == 0
   end
 
-  # ═══════════════════════════════════════════════════════════════════════════
-  # 217 Set Move Route
-  # ═══════════════════════════════════════════════════════════════════════════
-  def command_217(cmd)
-    params = cmd.parameters
-    char_id = params[0].to_i     # 0=player, -1=this event, >0=event id
-    char = nil
-    if char_id == 0
-      char = game_player
-    elsif char_id == -1
-      char = game_map.events[@event_id]
-    else
-      char = game_map.events[char_id]
-    end
-    return unless char
-    route = RPG::MoveRoute.new
-    route.repeat    = params[1] ? true : false
-    route.skippable = params[2] ? true : false
-    route.wait      = params[3] ? true : false
-    route.list = params[4] || []
-    char.move_route = route
-    char.move_route_index = 0
-    @wait_count = 1 if route.wait   # dừng ít nhất 1 frame chờ route bắt đầu
+  # 230 Wait — params = [frames]
+  def command_230(indent, command)
+    params = cmd_params(command)
+    @wait_count = (params.is_a?(Array) && params[0]) ? params[0].to_i : 0
   end
 
-  # ═══════════════════════════════════════════════════════════════════════════
-  # 230 Wait
-  # ═══════════════════════════════════════════════════════════════════════════
-  def command_230(cmd)
-    @wait_count = cmd.parameters[0].to_i
+  # 117 Common Event — chưa hỗ trợ, báo unsupported
+  def command_117(indent, command)
+    record_unsupported(117)
   end
 
-  # ═══════════════════════════════════════════════════════════════════════════
-  # 250 Play SE — chưa có audio, log + bỏ qua an toàn
-  # ═══════════════════════════════════════════════════════════════════════════
-  def command_250(cmd)
-    se = cmd.parameters[0]
-    name = se.respond_to?(:name) ? se.name : nil
-    warn "[RPGPlayer] EventInterpreter: Play SE '#{name}' chưa hỗ trợ audio — bỏ qua"
+  # 123 Self Switch — params = [switch_id("A".."D"), value(0/1)]
+  def command_123(indent, command)
+    params = cmd_params(command)
+    return unless params.is_a?(Array)
+    key = "#{@map_id},#{@event_id},#{params[0]}"
+    $game_self_switches[key] = ((params[1] || 0).to_i == 1) if $game_self_switches
   end
 
-  # ═══════════════════════════════════════════════════════════════════════════
-  # 355 / 655 Script — eval hạn chế, guard lỗi
-  # ═══════════════════════════════════════════════════════════════════════════
-  def command_355(cmd)
-    script = cmd.parameters[0].to_s
-    safe_eval(script)
+  # 250 Play SE — chưa hỗ trợ audio, báo unsupported
+  def command_250(indent, command)
+    record_unsupported(250)
   end
 
-  def command_655(cmd)
-    # Gom các dòng script có indent > indent(655)
-    lines = []
-    i = @index
-    while i < @list.size
-      c = @list[i]
-      break unless c.code == 655 && c.indent > cmd.indent
-      lines.push(c.parameters[0].to_s)
-      i += 1
-    end
-    @index = i
-    safe_eval(lines.join("\n"))
-  end
-
-  def safe_eval(script)
-    return false if script.nil? || script.strip.empty?
-    begin
-      eval(script)
-    rescue Exception => e
-      warn "[RPGPlayer] EventInterpreter: script lỗi (#{e.message}) — script=#{script[0, 80]}"
-      false
-    end
-  end
-
-  # ═══════════════════════════════════════════════════════════════════════════
-  # Hỗ trợ dùng chung
-  # ═══════════════════════════════════════════════════════════════════════════
-
-  # Skip tới lệnh End (412) cùng indent — dùng cho Else/When/Cancel.
-  def skip_to_end_of_block
-    cmd = @list[@index - 1]
-    indent = cmd.indent
-    i = @index
-    while i < @list.size
-      c = @list[i]
-      if c.indent == indent && c.code == 412
-        @index = i + 1
-        return
-      end
-      i += 1
-    end
-    @index = @list.size
+  # 355/655 Script — chưa hỗ trợ eval script, báo unsupported
+  def command_355(indent, command)
+    params = cmd_params(command)
+    script = params.is_a?(Array) ? params[0].to_s : params.to_s
+    record_unsupported(355)
   end
 end
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Khởi tạo runtime — gọi từ Swift sau khi load scripts (scene loop M6.5+)
-# ─────────────────────────────────────────────────────────────────────────────
-
-def rpg_player_setup_runtime
-  $game_temp = Game_Temp.new
-  $game_system = Game_System.new
-  $game_switches = Game_Switches.new
-  $game_variables = Game_Variables.new
+# ---------- Bootstrap ----------
+# Swift set global $rpg_player_boot_json (Ruby Hash literal: { "map_id" => n,
+# "x" => n, "y" => n, "events" => {map_id_str => [commands...]} }) rồi gọi
+# rpg_player_bootstrap (niladic — mrb_bridge_call_global không truyền được args).
+# ⚠️ mruby build KHÔNG có mruby-json mgem → dùng eval (mruby-eval có sẵn, xem
+# build_config_ios.rb) để biến boot string thành Ruby Hash. Giá trị do chính app
+# tạo từ file người dùng tự import — cùng trust model với RGSS scripts.
+#
+# Game_Map/Game_Player/Game_Switches/... dùng class từ GameClasses.rb (M6.2).
+def rpg_player_bootstrap
+  $game_switches      = Game_Switches.new
+  $game_variables     = Game_Variables.new
   $game_self_switches = Game_SelfSwitches.new
-  $game_party = Game_Party.new
-  $game_message = Game_Message.new
-  $game_map = Game_Map.new
-  $game_player = Game_Player.new($game_map)
-  $game_map.player = $game_player
-  # M6.5: interpreter của map — Game_Map.setup_starting_event gọi setup() khi
-  # có event.starting (touch/action trigger).
-  $game_interpreter = Game_Interpreter.new
-  $game_map.interpreter = $game_interpreter
-  if defined?(Window_Message) && !$game_message_window
-    $game_message_window = Window_Message.new(40, 200, 400, 100)
+  $game_message       = Game_Message.new
+  $game_interpreter   = Game_Interpreter.new
+  $game_win_message   = nil
+  $rpg_player_unsupported = []
+  $rpg_player_transfer = nil
+  $rpg_player_event_lists = {}
+  $rpg_player_event_setup_error = nil
+  $rpg_player_map_id = 0
+  $rpg_player_last_message = nil
+
+  # Map trống (mặc định) — DataFileLoader wire map data sau (M6-test).
+  map = Game_Map.new
+  player = Game_Player.new(map)
+  map.player = player
+  map.interpreter = $game_interpreter
+  $game_map = map
+  $game_player = player
+
+  boot = $rpg_player_boot_json
+  if boot && !boot.empty?
+    begin
+      parsed = eval(boot)
+      if parsed.is_a?(Hash)
+        $rpg_player_map_id = (parsed["map_id"] || 0).to_i
+        $game_interpreter.map_id = $rpg_player_map_id
+        px = (parsed["x"] || 0).to_i
+        py = (parsed["y"] || 0).to_i
+        $game_player.moveto(px, py)
+        events = parsed["events"]
+        if events.is_a?(Hash)
+          parsed_events = {}
+          events.each do |k, v|
+            if v.is_a?(Array)
+              parsed_events[k] = v
+            elsif v.is_a?(Hash)
+              # Swift gửi dạng { "map_1" => { "events": [ { "id": 1, "list": [...] } ] } }
+              elist = v["events"] || v["list"]
+              parsed_events[k] = elist.is_a?(Array) ? elist : []
+            end
+          end
+          $rpg_player_event_lists = parsed_events
+        end
+      else
+        $rpg_player_event_setup_error = "Boot JSON invalid (not Hash)"
+      end
+    rescue => e
+      $rpg_player_event_setup_error = e.message
+    end
+  end
+  true
+end
+
+# ---------- Per-frame hook ----------
+# M6.5: redefine rpg_player_advance_frame (bản M6.2 trong GameClasses.rb) —
+# bổ sung message feed cho Window_Message. Gọi đầy đủ: map.update (chứa
+# setup_starting_event → interpreter chạy event), player.update,
+# interpreter.update, message feed.
+def rpg_player_advance_frame
+  map = $game_map
+  if map
+    map.update
+    player = map.player
+    player.update if player
+  end
+  interp = $game_interpreter
+  interp.update if interp && interp.running?
+  # Feed message text vào Window_Message mỗi frame (chỉ khi text đổi —
+  # tránh re-render texture giống nhau mỗi frame).
+  if $game_win_message && $game_message && $game_message.visible_message?
+    text = $game_message.texts.join("\n")
+    if $rpg_player_last_message != text
+      $rpg_player_last_message = text
+      $game_win_message.start_message(text, {}, {})
+    end
+  else
+    $rpg_player_last_message = nil
   end
   true
 end

@@ -221,6 +221,15 @@ class Game_CharacterBase
     @direction = UP unless @direction_fix
   end
 
+  # Di chuyển tới toạ độ (x, y) ngay lập tức, bỏ qua va chạm (RGSS3:
+  # Game_CharacterBase#moveto — RGSS Reference Manual).
+  def moveto(x, y)
+    @x = x
+    @y = y
+    @real_x = x
+    @real_y = y
+  end
+
   # Di chuyển 1 tile theo hướng hiện tại (nếu passable)
   def move_straight(dir, turn_ok = true)
     @direction = dir if turn_ok && !@direction_fix
