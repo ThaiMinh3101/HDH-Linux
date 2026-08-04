@@ -1,5 +1,6 @@
 # RPGPlayer/Resources/RGSSBuiltins.rb
 # M6.3 — RGSS built-in classes (Table) cho RPG Maker VX Ace (RGSS3).
+# M7 — Thêm Color (script ATB dùng Color.new cho gauge màu).
 #
 # CLEAN-ROOM: viết từ RGSS3 Reference Manual (help file công khai đi kèm
 # RPG Maker VX Ace). KHÔNG tham chiếu cấu trúc field/logic từ bất kỳ engine
@@ -72,5 +73,37 @@ class Table
     @ysize = ysize
     @zsize = zsize
     @data = new_data
+  end
+end
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Color — RGSS built-in class (M7)
+# RGSS Reference Manual: Color.new(red, green, blue[, alpha])
+#   red/green/blue/alpha: 0-255, alpha mặc định 255.
+#   set(red, green, blue[, alpha]) — đặt lại giá trị.
+#   == so sánh 4 thành phần.
+# ─────────────────────────────────────────────────────────────────────────────
+
+class Color
+  attr_accessor :red
+  attr_accessor :green
+  attr_accessor :blue
+  attr_accessor :alpha
+
+  def initialize(red = 0, green = 0, blue = 0, alpha = 255)
+    set(red, green, blue, alpha)
+  end
+
+  def set(red, green, blue, alpha = 255)
+    @red   = red.to_i
+    @green = green.to_i
+    @blue  = blue.to_i
+    @alpha = alpha.to_i
+  end
+
+  def ==(other)
+    other.is_a?(Color) &&
+      @red == other.red && @green == other.green &&
+      @blue == other.blue && @alpha == other.alpha
   end
 end

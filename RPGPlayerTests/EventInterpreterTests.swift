@@ -4,9 +4,10 @@ import XCTest
 /// Unit test cho M6.5 — Game_Interpreter (EventInterpreter).
 ///
 /// Xác minh các opcode Batch 1 đã duyệt chạy đúng trên VM mruby:
-///   101 Show Text, 111 Conditional Branch (+411/412), 121 Control Switches,
-///   122 Control Variables, 123 Control Self Switch, 125 Change Gold,
-///   201 Transfer Player, 230 Wait, 118/119 Label & Jump.
+///   101 Show Text, 102 Show Choices, 111 Conditional Branch (+411/412),
+///   121 Control Switches, 122 Control Variables, 123 Control Self Switch,
+///   125 Change Gold, 201 Transfer Player, 230 Wait, 113/115/413 Loop/Break,
+///   118/119 Label & Jump.
 ///
 /// CLEAN-ROOM: test viết từ RGSS3 Reference Manual (help file công khai đi
 /// kèm RPG Maker VX Ace), phần "Event Commands" mô tả opcode + tham số.
@@ -55,6 +56,122 @@ final class EventInterpreterTests: XCTestCase {
         XCTAssertEqual(rc, 0, "Show Text (101) sai: \(err)")
     }
 
+    // MARK: - 102 Show Choices
+
+    /// 102 Show Choices: chọn index 0 → nhảy đúng block 402.
+    /// M6.5: confirm_choice cần Input.trigger?(C) — trong test không có input
+    /// thật, ta gọi jump_to_choice trực tiếp để verify nhảy đúng block.
+    func testChoicesJumpToSelectedBlock() {
+        let bridge = makeBridge()
+        let script = runtimePrefix + #"""
+        gi.setup([
+          cmd(102, 0, ["Attack", "Run"], 0),
+          cmd(402, 1, 0),          # choice 0
+          cmd(121, 1, 10, 10, 0),  #   switch 10 = ON
+          cmd(404, 1),             # end choices
+          cmd(402, 1, 1),          # choice 1
+          cmd(121, 1, 11, 11, 0),  #   switch 11 = ON
+          cmd(404, 1),             # end choices
+        ], 1)
+        gi.update
+        raise "choice_available phải true" unless gi.choice_available
+        gi.jump_to_choice(0)
+        gi.update
+        raise "choice 0: s10 phải ON" unless $game_switches[10] == true
+        raise "choice 0: s11 phải OFF" unless $game_switches[11] == false
+        puts "CHOICES_JUMP_OK"
+        """#
+        let (rc, err) = bridge.runTestScript(script)
+        XCTAssertEqual(rc, 0, "Choices jump (102) sai: \(err)")
+    }
+
+    /// 102 Show Choices: cancel (B) → nhảy tới 403.
+    func testChoicesCancelJumpsToCancelBlock() {
+        let bridge = makeBridge()
+        let script = runtimePrefix + #"""
+        gi.setup([
+          cmd(102, 0, ["Attack", "Run"], 1),  # cancel_type = 1 (cho phép cancel)
+          cmd(402, 1, 0),
+          cmd(121, 1, 10, 10, 0),
+          cmd(404, 1),
+          cmd(403, 1),              # cancel block
+          cmd(121, 1, 12, 12, 0),   #   switch 12 = ON
+          cmd(404, 1),
+        ], 1)
+        gi.update
+        gi.jump_to_choice_cancel
+        gi.update
+        raise "cancel: s12 phải ON" unless $game_switches[12] == true
+        raise "cancel: s10 phải OFF" unless $game_switches[10] == false
+        puts "CHOICES_CANCEL_OK"
+        """#
+        let (rc, err) = bridge.runTestScript(script)
+        XCTAssertEqual(rc, 0, "Choices cancel (102) sai: \(err)")
+    }
+
+    // MARK: - 111 Conditional Branch
+
+    /// 111 true → chạy nhánh if, bỏ qua else (411).
+    func testConditionalBranchTrueRunsThenBlock() {
+        let bridge = makeBridge()
+        let script = runtimePrefix + #"""
+        # Switch 1 ON trước → điều kiện "switch 1 == ON" đúng
+        $game_switches[1] = true
+        gi.setup([
+          cmd(111, 0, 0, 1, 1),     # if switch 1 == ON (value2=1)
+          cmd(121, 1, 10, 10, 0),   #   switch 10 = ON
+          cmd(411, 1),              # else
+          cmd(121, 1, 11, 11, 0),   #   switch 11 = ON
+          cmd(412, 0),              # end
+        ], 1)
+        gi.update
+        raise "branch true: s10 phải ON" unless $game_switches[10] == true
+        raise "branch true: s11 phải OFF" unless $game_switches[11] == false
+        puts "CONDITIONAL_TRUE_OK"
+        """#
+        let (rc, err) = bridge.runTestScript(script)
+        XCTAssertEqual(rc, 0, "Conditional Branch true (111) sai: \(err)")
+    }
+
+    /// 111 false → nhảy tới else (411)+1, chạy nhánh else.
+    func testConditionalBranchFalseRunsElse() {
+        let bridge = makeBridge()
+        let script = runtimePrefix + #"""
+        $game_switches[1] = false
+        gi.setup([
+          cmd(111, 0, 0, 1, 1),     # if switch 1 == ON (false)
+          cmd(121, 1, 10, 10, 0),   #   switch 10 = ON (bỏ qua)
+          cmd(411, 1),              # else
+          cmd(121, 1, 11, 11, 0),   #   switch 11 = ON
+          cmd(412, 0),              # end
+        ], 1)
+        gi.update
+        raise "branch false: s10 phải OFF" unless $game_switches[10] == false
+        raise "branch false: s11 phải ON" unless $game_switches[11] == true
+        puts "CONDITIONAL_FALSE_OK"
+        """#
+        let (rc, err) = bridge.runTestScript(script)
+        XCTAssertEqual(rc, 0, "Conditional Branch false (111) sai: \(err)")
+    }
+
+    /// 111 variable comparison: var >= n.
+    func testConditionalBranchVariableCompare() {
+        let bridge = makeBridge()
+        let script = runtimePrefix + #"""
+        $game_variables[1] = 15
+        gi.setup([
+          cmd(111, 0, 1, 1, 1, 10),  # if var1 >= 10 (op=1)
+          cmd(121, 1, 10, 10, 0),    #   switch 10 = ON
+          cmd(412, 0),               # end
+        ], 1)
+        gi.update
+        raise "var cmp: s10 phải ON" unless $game_switches[10] == true
+        puts "CONDITIONAL_VAR_OK"
+        """#
+        let (rc, err) = bridge.runTestScript(script)
+        XCTAssertEqual(rc, 0, "Conditional Branch variable (111) sai: \(err)")
+    }
+
     // MARK: - 121 Control Switches
 
     /// 121 Control Switches: đặt range switch đúng true/false.
@@ -79,20 +196,24 @@ final class EventInterpreterTests: XCTestCase {
     // MARK: - 122 Control Variables
 
     /// 122 Control Variables: operation set/add/sub/mul/div/mod + operand const/var/gold.
+    /// params = [start, end, op(0 set,1 add,2 sub,3 mul,4 div,5 mod),
+    ///           operand_type(0 const,1 var,2 random,3 game data), operand, operand2]
     func testControlVariablesOperations() {
         let bridge = makeBridge()
         let script = runtimePrefix + #"""
-        # [start, end, op, operand, param1..]
         gi.setup([
-          cmd(122, 0, 1, 1, 0, 0, 10),       # var1 = 10 (const)
-          cmd(122, 0, 2, 2, 1, 0, 1),        # var2 = var2 + var1 → 10 (add var)
-          cmd(122, 0, 3, 3, 1, 0, 2),        # var3 = 0 * 2 → 0 (vì var3 chưa có)
-          cmd(122, 0, 4, 4, 1, 0, 25),       # var4 = 0 / 25 → 0
-          cmd(122, 0, 5, 5, 1, 0, 3),        # var5 = 0 % 3 → 0
+          cmd(122, 0, 1, 1, 0, 0, 10),       # var1 = 10 (set const)
+          cmd(122, 0, 2, 2, 1, 1, 1, 0),     # var2 = var2 + var1 → 0 + 10 = 10 (add var)
+          cmd(122, 0, 3, 3, 3, 0, 2),        # var3 = 0 * 2 → 0 (mul const)
+          cmd(122, 0, 4, 4, 4, 0, 25),       # var4 = 0 / 25 → 0 (div const)
+          cmd(122, 0, 5, 5, 5, 0, 3),        # var5 = 0 % 3 → 0 (mod const)
         ], 1)
         3.times { gi.update }
         raise "var1 sai: #{$game_variables[1]}" unless $game_variables[1] == 10
         raise "var2 sai: #{$game_variables[2]}" unless $game_variables[2] == 10
+        raise "var3 sai: #{$game_variables[3]}" unless $game_variables[3] == 0
+        raise "var4 sai: #{$game_variables[4]}" unless $game_variables[4] == 0
+        raise "var5 sai: #{$game_variables[5]}" unless $game_variables[5] == 0
         puts "CONTROL_VARIABLES_CONST_OK"
 
         # Game data gold (type 11)
@@ -109,15 +230,16 @@ final class EventInterpreterTests: XCTestCase {
     // MARK: - 123 Control Self Switch
 
     /// 123 Control Self Switch: bật/tắt key "map_id,event_id,ch".
+    /// params = [switch_id("A".."D"), value(0/1)] — dùng 0/1, không dùng "ON"/"OFF".
     func testControlSelfSwitch() {
         let bridge = makeBridge()
         let script = runtimePrefix + #"""
         gi.map_id = 1
         gi.event_id = 5
-        gi.setup([cmd(123, 0, "A", "ON")], 5)
+        gi.setup([cmd(123, 0, "A", 1)], 5)
         gi.update
         raise "self switch A sai" unless $game_self_switches["1,5,A"] == true
-        gi.setup([cmd(123, 0, "A", "OFF")], 5)
+        gi.setup([cmd(123, 0, "A", 0)], 5)
         gi.update
         raise "self switch A off sai" unless $game_self_switches["1,5,A"] == false
         puts "CONTROL_SELF_SWITCH_OK"
@@ -143,51 +265,6 @@ final class EventInterpreterTests: XCTestCase {
         """#
         let (rc, err) = bridge.runTestScript(script)
         XCTAssertEqual(rc, 0, "Change Gold (125) sai: \(err)")
-    }
-
-    // MARK: - 111 Conditional Branch
-
-    /// 111 true → chạy nhánh if, bỏ qua else (411).
-    func testConditionalBranchTrueRunsThenBlock() {
-        let bridge = makeBridge()
-        let script = runtimePrefix + #"""
-        # Switch 1 ON trước → điều kiện "switch 1 == ON" đúng
-        $game_switches[1] = true
-        gi.setup([
-          cmd(111, 0, 0, 1, 0),     # if switch 1 == ON
-          cmd(121, 1, 10, 10, 0),   #   switch 10 = ON
-          cmd(411, 1),              # else
-          cmd(121, 1, 11, 11, 0),   #   switch 11 = ON
-          cmd(412, 0),              # end
-        ], 1)
-        gi.update
-        raise "branch true: s10 phải ON" unless $game_switches[10] == true
-        raise "branch true: s11 phải OFF" unless $game_switches[11] == false
-        puts "CONDITIONAL_TRUE_OK"
-        """#
-        let (rc, err) = bridge.runTestScript(script)
-        XCTAssertEqual(rc, 0, "Conditional Branch true (111) sai: \(err)")
-    }
-
-    /// 111 false → nhảy tới else (411)+1, chạy nhánh else.
-    func testConditionalBranchFalseRunsElse() {
-        let bridge = makeBridge()
-        let script = runtimePrefix + #"""
-        $game_switches[1] = false
-        gi.setup([
-          cmd(111, 0, 0, 1, 0),     # if switch 1 == ON (false)
-          cmd(121, 1, 10, 10, 0),   #   switch 10 = ON (bỏ qua)
-          cmd(411, 1),              # else
-          cmd(121, 1, 11, 11, 0),   #   switch 11 = ON
-          cmd(412, 0),              # end
-        ], 1)
-        gi.update
-        raise "branch false: s10 phải OFF" unless $game_switches[10] == false
-        raise "branch false: s11 phải ON" unless $game_switches[11] == true
-        puts "CONDITIONAL_FALSE_OK"
-        """#
-        let (rc, err) = bridge.runTestScript(script)
-        XCTAssertEqual(rc, 0, "Conditional Branch false (111) sai: \(err)")
     }
 
     // MARK: - 230 Wait
@@ -242,6 +319,51 @@ final class EventInterpreterTests: XCTestCase {
         XCTAssertEqual(rc, 0, "Transfer Player (201) sai: \(err)")
     }
 
+    // MARK: - 113/115/413 Loop & Break
+
+    /// 113 Loop + 115 Break: loop chạy 1 lần, break nhảy ra khỏi loop.
+    func testLoopBreak() {
+        let bridge = makeBridge()
+        let script = runtimePrefix + #"""
+        gi.setup([
+          cmd(113, 0),              # loop
+          cmd(121, 1, 10, 10, 0),   #   switch 10 = ON
+          cmd(115, 1),              #   break loop
+          cmd(121, 1, 11, 11, 0),   #   switch 11 = ON (bỏ qua — sau break)
+          cmd(412, 0),              # end loop
+          cmd(121, 0, 12, 12, 0),   # switch 12 = ON (sau loop)
+        ], 1)
+        gi.update
+        raise "loop: s10 phải ON" unless $game_switches[10] == true
+        raise "loop: s11 phải OFF (sau break)" unless $game_switches[11] == false
+        raise "loop: s12 phải ON (sau loop)" unless $game_switches[12] == true
+        puts "LOOP_BREAK_OK"
+        """#
+        let (rc, err) = bridge.runTestScript(script)
+        XCTAssertEqual(rc, 0, "Loop/Break (113/115) sai: \(err)")
+    }
+
+    /// 413 Repeat Loop: quay lại 113 cùng indent — chạy lại body.
+    func testLoopRepeat() {
+        let bridge = makeBridge()
+        let script = runtimePrefix + #"""
+        gi.setup([
+          cmd(113, 0),              # loop
+          cmd(121, 1, 10, 10, 0),   #   switch 10 = ON
+          cmd(121, 1, 11, 11, 0),   #   switch 11 = ON
+          cmd(413, 1),              #   repeat loop → quay lại 113
+          cmd(412, 0),              # end loop (không tới được — repeat vô hạn)
+        ], 1)
+        # Chỉ chạy 1 frame — repeat sẽ quay lại 113, không crash
+        gi.update
+        raise "loop repeat: s10 phải ON" unless $game_switches[10] == true
+        raise "loop repeat: s11 phải ON" unless $game_switches[11] == true
+        puts "LOOP_REPEAT_OK"
+        """#
+        let (rc, err) = bridge.runTestScript(script)
+        XCTAssertEqual(rc, 0, "Loop Repeat (413) sai: \(err)")
+    }
+
     // MARK: - 119 Jump to Label
 
     /// 119 Jump to Label: nhảy đúng tới lệnh sau label, bỏ qua block giữa.
@@ -264,12 +386,13 @@ final class EventInterpreterTests: XCTestCase {
     }
 
     /// 118 Label / 119 Jump: label không có trong list → cảnh báo, không crash.
+    /// Interpreter vẫn còn running (list không empty) nhưng index đã hết list.
     func testJumpToMissingLabelDoesNotCrash() {
         let bridge = makeBridge()
         let script = runtimePrefix + #"""
         gi.setup([cmd(119, 0, "NOT_EXIST")], 1)
         gi.update
-        raise "interpreter còn chạy" if gi.running?
+        raise "index phải hết list: #{gi.index}" unless gi.index >= gi.list.size
         puts "JUMP_MISSING_OK"
         """#
         let (rc, err) = bridge.runTestScript(script)

@@ -198,6 +198,10 @@ final class RubyBridge {
         // interpreter event map. Load sau WindowClasses (Window_Message có thể
         // được dùng trong interpreter), trước Scripts.rvdata2.
         loadEventClasses(into: mrbPtr)
+        // M7: Load Battle classes (Game_Battler/BattleManager/Scene_Battle...)
+        // — cần cho script ATB (battle system). Load sau EventClasses, trước
+        // Scripts.rvdata2.
+        loadBattleClasses(into: mrbPtr)
 
         // ---------------------------------------------------------------------------
         // Execute scripts in order
@@ -247,6 +251,17 @@ final class RubyBridge {
         if syntaxErrorCount > 0 {
             print("[RubyBridge] ⚠️  Có \(syntaxErrorCount) script bị lỗi cú pháp — "
                   + "script hỏng có thể khiến game chạy sai. Xem log ở trên.")
+        }
+
+        // M6.5: Khởi tạo runtime (Game_* globals + interpreter) sau khi load
+        // scripts. rpg_player_setup_runtime định nghĩa trong EventClasses.rb.
+        // Nếu lỗi → log ⚠️ (không dừng VM — game vẫn có thể chạy một phần).
+        let setupRC = mrb_bridge_call_global(mrbPtr, "rpg_player_setup_runtime")
+        if setupRC != 0 {
+            let err = String(cString: mrb_bridge_last_error(mrbPtr))
+            print("[RubyBridge] ⚠️  rpg_player_setup_runtime lỗi: \(err)")
+        } else {
+            print("[RubyBridge] ✅ Runtime initialized (rpg_player_setup_runtime)")
         }
 
         // M6.2: VM đã load xong toàn bộ scripts — cho phép advanceFrame() chạy.
@@ -381,6 +396,32 @@ final class RubyBridge {
         }
     }
 
+    /// M7: Load BattleClasses.rb (Game_Battler/BattleManager/Scene_Battle...) từ
+    /// bundle vào VM. Load sau EventClasses.rb, trước Scripts.rvdata2.
+    /// Nếu không tìm thấy → log ⚠️ (không dừng VM).
+    private func loadBattleClasses(into mrbPtr: UnsafeMutablePointer<mrb_state>) {
+        guard let url = Bundle(for: RubyBridge.self).url(forResource: "BattleClasses", withExtension: "rb"),
+              let source = try? String(contentsOf: url, encoding: .utf8) else {
+            print("[RubyBridge] ⚠️  Không tìm thấy BattleClasses.rb trong bundle")
+            return
+        }
+
+        var cBytes = source.utf8CString
+        let rc = cBytes.withUnsafeBufferPointer { buf in
+            var isSyntax: Int32 = 0
+            let rc = mrb_bridge_load_nstring(mrbPtr, buf.baseAddress, buf.count - 1, &isSyntax)
+            lastSyntaxFlag = isSyntax != 0
+            return rc
+        }
+
+        if rc == 0 {
+            print("[RubyBridge] ✅ Battle classes loaded (BattleClasses.rb)")
+        } else {
+            let err = String(cString: mrb_bridge_last_error(mrbPtr))
+            print("[RubyBridge] ⚠️  BattleClasses.rb load \(lastSyntaxFlag ? "SYNTAX" : "runtime") error: \(err)")
+        }
+    }
+
     /// M6.4: Load WindowClasses.rb (Window_Base/Window_Message/Window_Selectable)
     /// từ bundle vào VM. Load sau GameClasses.rb, trước Scripts.rvdata2.
     /// Dùng Bundle(for:) thay vì Bundle.main (giống loadGameClasses).
@@ -474,6 +515,8 @@ final class RubyBridge {
           loadWindowClasses(into: mrbPtr)
           // M6.5: Load Event classes (Game_Interpreter/Game_Message) cho unit test
           loadEventClasses(into: mrbPtr)
+          // M7: Load Battle classes cho unit test
+          loadBattleClasses(into: mrbPtr)
           return true
     }
 

@@ -545,11 +545,25 @@ end
   end
 
   # ── M6.5: chạy interpreter cho event starting đầu tiên ──
+  # Ưu tiên action trigger (0/1/2) trước, rồi touch trigger (1/2).
+  # Chỉ chạy interpreter nếu chưa running; event.starting reset sau khi chạy.
+  # Parallel trigger (3) không chạy 2 lần cùng lúc (interpreter.running? guard).
   def setup_starting_event
     return unless @interpreter
     return if @interpreter.running?
+    # Ưu tiên action button trigger (0 = action, 1 = touch, 2 = collision)
     @events.each_value do |event|
       next unless event.starting
+      next unless [0, 1, 2].include?(event.trigger)
+      @interpreter.setup(event.list, event.event_id)
+      @interpreter.map_id = @map_id
+      event.starting = false
+      return
+    end
+    # Fallback: touch trigger (1/2) — event cùng ô player
+    @events.each_value do |event|
+      next unless event.starting
+      next unless [1, 2].include?(event.trigger)
       @interpreter.setup(event.list, event.event_id)
       @interpreter.map_id = @map_id
       event.starting = false
@@ -595,22 +609,39 @@ class Game_Player < Game_Character
 
   def update
     move_by_input
-    check_event_trigger_touch([1, 2])
+    check_touch_event
     check_action_event
   end
 
   # ── M6.5: touch trigger (event cùng ô khi player bước vào) ──
-  def check_event_trigger_touch(triggers)
+  # Chỉ chạy nếu không có action event đang chờ (tránh chạy 2 event cùng lúc).
+  def check_touch_event
     return if $game_map.nil?
-    $game_map.check_event_trigger_here(triggers)
+    return if $game_map.interpreter && $game_map.interpreter.running?
+    $game_map.check_event_trigger_here([1, 2])
   end
 
   # ── M6.5: action button (nhấn C — RGSS Input::C = confirm) ──
+  # Kiểm tra event ở ô phía trước (front tile) + event cùng ô (chạm mặt).
   def check_action_event
     return if $game_map.nil?
     return unless Input.trigger?(Input::C)
-    $game_map.check_event_trigger_here([2])
+    return if $game_map.interpreter && $game_map.interpreter.running?
     $game_map.check_event_trigger_there([0, 1, 2])
+    $game_map.check_event_trigger_here([2])
+  end
+
+  # ── M6.5: start event tại vị trí hiện tại (dùng cho touch trigger) ──
+  def start_map_event(x, y, triggers)
+    return if $game_map.nil?
+    $game_map.events.each_value do |event|
+      next unless event.x == x && event.y == y
+      next unless triggers.include?(event.trigger)
+      next if event.erased || event.through
+      next if event.page_index < 0
+      event.starting = true
+      return
+    end
   end
 end
 
@@ -672,7 +703,9 @@ class Game_Event < Game_Character
     end
   end
 
-  # ── M6.5: điều kiện page (2 switch + 1 variable + self switch — RGSS3) ──
+  # ── M6.5: điều kiện page (2 switch + 1 variable + self switch + item + actor — RGSS3) ──
+  # Condition trống (mọi valid = false) → page hoạt động (RGSS3: page đầu tiên
+  # không có điều kiện luôn active).
   def page_condition_met?(page)
     cond = page.condition
     return true unless cond
@@ -704,6 +737,16 @@ class Game_Event < Game_Character
       return false unless $game_self_switches
       key = "#{$game_map ? $game_map.map_id : 0},#{@event_id},#{cond.self_switch_ch}"
       return false unless $game_self_switches[key]
+    end
+    # M6.5: item condition (player có item trong inventory)
+    if cond.respond_to?(:item_valid) && cond.item_valid
+      return false unless $game_party
+      return false unless $game_party.has_item?(cond.item_id)
+    end
+    # M6.5: actor condition (actor trong party)
+    if cond.respond_to?(:actor_valid) && cond.actor_valid
+      return false unless $game_party
+      return false unless $game_party.actor_in_party?(cond.actor_id)
     end
     true
   end
@@ -832,6 +875,18 @@ class Game_Party
 
   def all_dead?
     @actors.all?(&:dead?)
+  end
+
+  # M6.5: kiểm tra actor có trong party không (dùng cho page condition)
+  def actor_in_party?(actor_id)
+    @actors.any? { |a| a.actor_id == actor_id }
+  end
+
+  # M6.5: kiểm tra player có item không (dùng cho page condition)
+  # Bản tối thiểu: chưa có inventory thật — trả false (page item condition
+  # sẽ không active cho tới khi inventory được implement đầy đủ).
+  def has_item?(item_id)
+    false
   end
 end
 
