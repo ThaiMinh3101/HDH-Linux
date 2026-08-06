@@ -60,6 +60,12 @@ struct GameEntry: Identifiable, Codable, Equatable {
     /// Dung lượng file tính bằng byte (update khi import)
     var sizeBytes: Int64
 
+    // MARK: - M8: RTP requirement
+
+    /// Mức độ yêu cầu RTP (Runtime Package) của game.
+    /// Mặc định .none — backward-compatible với library.json cũ (không có field này).
+    var rtpRequirement: RTPRequirement
+
     // MARK: - M5: Per-game translation settings
 
     /// Bật/tắt overlay dịch cho game này. Mặc định false.
@@ -79,6 +85,7 @@ struct GameEntry: Identifiable, Codable, Equatable {
         relativeSandboxPath: String,
         relativeThumbnailPath: String? = nil,
         sizeBytes: Int64 = 0,
+        rtpRequirement: RTPRequirement = .none,
         translationEnabled: Bool = false,
         targetLanguageCode: String? = nil
     ) {
@@ -89,6 +96,7 @@ struct GameEntry: Identifiable, Codable, Equatable {
         self.relativeSandboxPath = relativeSandboxPath
         self.relativeThumbnailPath = relativeThumbnailPath
         self.sizeBytes = sizeBytes
+        self.rtpRequirement = rtpRequirement
         self.translationEnabled = translationEnabled
         self.targetLanguageCode = targetLanguageCode
     }
@@ -100,6 +108,7 @@ struct GameEntry: Identifiable, Codable, Equatable {
     enum CodingKeys: String, CodingKey {
         case id, name, engine, importDate
         case relativeSandboxPath, relativeThumbnailPath, sizeBytes
+        case rtpRequirement
         case translationEnabled, targetLanguageCode
     }
 
@@ -113,6 +122,7 @@ struct GameEntry: Identifiable, Codable, Equatable {
         relativeThumbnailPath = try c.decodeIfPresent(String.self, forKey: .relativeThumbnailPath)
         sizeBytes            = try c.decode(Int64.self,      forKey: .sizeBytes)
         // Backward-compat: field mới không có trong file cũ → default values
+        rtpRequirement       = try c.decodeIfPresent(RTPRequirement.self, forKey: .rtpRequirement) ?? .none
         translationEnabled   = try c.decodeIfPresent(Bool.self,   forKey: .translationEnabled) ?? false
         targetLanguageCode   = try c.decodeIfPresent(String.self, forKey: .targetLanguageCode)
     }

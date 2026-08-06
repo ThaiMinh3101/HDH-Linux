@@ -81,12 +81,18 @@ Ví dụ: `RPGPlayer-4b1ff92abc-12` → commit `4b1ff92`, lần chạy thứ 12.
 | # | Milestone | Trạng thái |
 |---|-----------|-----------| 
 | M0 | Khung app, Library UI, Import ZIP, GameDetector | ✅ Xong |
+| M0.5 | CI/CD pipeline (GitHub Actions → .ipa qua AltStore) | ✅ Xong |
 | M1a | Engine MV/MZ (WKWebView + JS shim) | ✅ Xong |
-| M1b | Engine RGSS "Hello Sprite" (mruby + Metal) | 🔧 In progress |
-| M2 | Input (GameController + D-pad ảo) | 🔲 |
-| M3 | Save game + iCloud sync | 🔲 |
-| M4 | Plugin manager, chống crash, dọn cache | 🔲 |
-| M5 | Dịch + tối ưu 60fps | 🔲 |
+| M1b | Engine RGSS "Hello Sprite" (mruby + Metal) | ✅ Xong |
+| M2 | Input (GameController + D-pad ảo) | ✅ Xong |
+| M3 | Save game + iCloud sync | ✅ Xong |
+| M4 | Plugin manager, chống crash, dọn cache | ✅ Xong |
+| M5 | Dịch + tối ưu 60fps | ✅ Xong |
+| M6 | RGSS Full Runtime (Scripts loader, Event Interpreter, Window, Tilemap) | 🔧 In progress |
+| M7 | ATB Battle System (BattleClasses skeleton) | 🔧 In progress |
+| M8 | RTP Detection & GameEntry Model | 🔧 In progress |
+| M8.0 | RTP Detection (RTPRequirement enum, detectRTP, backward-compat) | ✅ Xong (code) |
+| M8.1 | RTP Warning Dialog & ENOENT Crash Handler | ✅ Xong (code) |
 
 ---
 

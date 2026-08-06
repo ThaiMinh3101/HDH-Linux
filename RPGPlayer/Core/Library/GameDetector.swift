@@ -1,5 +1,17 @@
 import Foundation
 
+/// Mức độ yêu cầu RTP (Runtime Package) của game RGSS.
+/// RPG Maker XP/VX/VX Ace cần bộ Runtime Package riêng (Audio/Fonts/Graphics).
+/// MV/MZ không dùng RTP (asset đã bundle trong www/).
+enum RTPRequirement: String, Codable {
+    /// Game không dùng RTP (MV/MZ, hoặc Game.ini không có dòng rtp=)
+    case none
+    /// rtp= non-empty trong Game.ini, nhưng Audio/Fonts/Graphics chưa đủ
+    case required
+    /// rtp= non-empty và người dùng đã merge đủ 3 thư mục
+    case satisfied
+}
+
 /// Phân loại engine của game dựa vào cấu trúc thư mục sau khi giải nén.
 /// Clean-room implementation — chỉ dựa vào tài liệu công khai RPG Maker.
 ///
@@ -48,6 +60,55 @@ enum GameDetector {
         }
 
         return .unknown
+    }
+
+    /// Xác định mức độ yêu cầu RTP (Runtime Package) của game RGSS.
+    ///
+    /// Logic:
+    /// - Đọc Game.ini, tìm dòng bắt đầu bằng "rtp=" (case-insensitive).
+    /// - Không có dòng rtp= hoặc giá trị rỗng → `.none` (MV/MZ cũng không có Game.ini → `.none`).
+    /// - rtp= non-empty → kiểm tra 3 thư mục Audio/, Fonts/, Graphics/:
+    ///   - Cả 3 đều tồn tại → `.satisfied` (user đã merge RTP)
+    ///   - Thiếu bất kỳ 1 → `.required`
+    ///
+    /// Lưu ý: giá trị rtp= có thể là "RPGVXAce", "RPGVXace", "RPGXPace" hay bất kỳ
+    /// chuỗi nào — KHÔNG hardcode whitelist, chỉ cần non-empty là đủ điều kiện.
+    /// - Parameter rootURL: thư mục gốc chứa nội dung game (Application Support/RPGPlayer/Games/<uuid>/)
+    /// - Returns: RTPRequirement tương ứng
+    static func detectRTP(in rootURL: URL) -> RTPRequirement {
+        let fm = FileManager.default
+        let gameRoot = resolveGameRoot(in: rootURL, fileManager: fm)
+
+        // --- Bước 1: Đọc Game.ini, tìm dòng rtp= ---
+        let iniURL = gameRoot.appendingPathComponent("Game.ini")
+        guard let iniContent = try? String(contentsOf: iniURL, encoding: .utf8) else {
+            // Không có Game.ini (MV/MZ hoặc game không chuẩn) → không dùng RTP
+            return .none
+        }
+
+        var rtpValue: String? = nil
+        for line in iniContent.components(separatedBy: .newlines) {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            if trimmed.lowercased().hasPrefix("rtp=") {
+                let value = String(trimmed.dropFirst("rtp=".count))
+                    .trimmingCharacters(in: .whitespaces)
+                rtpValue = value
+                break
+            }
+        }
+
+        // --- Bước 2: Không có rtp= hoặc giá trị rỗng → .none ---
+        guard let rtp = rtpValue, !rtp.isEmpty else {
+            return .none
+        }
+
+        // --- Bước 3: rtp= non-empty → kiểm tra 3 thư mục RTP ---
+        let requiredDirs = ["Audio", "Fonts", "Graphics"]
+        let allPresent = requiredDirs.allSatisfy { dir in
+            fm.fileExists(atPath: gameRoot.appendingPathComponent(dir).path)
+        }
+
+        return allPresent ? .satisfied : .required
     }
 
     // MARK: - Private helpers

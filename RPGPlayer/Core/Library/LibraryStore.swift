@@ -47,7 +47,15 @@ final class LibraryStore {
             let data = try Data(contentsOf: metadataURL)
             let decoder = JSONDecoder()
             decoder.dateDecodingStrategy = .iso8601
-            games = try decoder.decode([GameEntry].self, from: data)
+            var decoded = try decoder.decode([GameEntry].self, from: data)
+
+            // M8: Re-evaluate rtpRequirement cho mỗi entry khi load lại thư viện.
+            // Người dùng có thể đã thêm thư mục RTP vào sandbox kể từ lần import trước.
+            for i in decoded.indices {
+                let sandboxURL = absoluteSandboxURL(for: decoded[i])
+                decoded[i].rtpRequirement = GameDetector.detectRTP(in: sandboxURL)
+            }
+            games = decoded
         } catch {
             // Nếu decode thất bại (file hỏng), reset về rỗng thay vì crash
             print("[LibraryStore] Decode thất bại, reset thư viện: \(error)")
@@ -109,6 +117,9 @@ final class LibraryStore {
             // 5. Kích thước
             let size = StorageManager.shared.totalSize(for: newID)
 
+            // 6. RTP requirement (M8) — xác định ngay lúc import
+            let rtpRequirement = GameDetector.detectRTP(in: destination)
+
             let entry = GameEntry(
                 id: newID,
                 name: gameName,
@@ -116,13 +127,14 @@ final class LibraryStore {
                 importDate: Date(),
                 relativeSandboxPath: StorageManager.shared.relativePath(for: destination),
                 relativeThumbnailPath: relativeThumbnail,
-                sizeBytes: size
+                sizeBytes: size,
+                rtpRequirement: rtpRequirement
             )
 
             games.append(entry)
             save()
 
-            // 6. Nếu engine không nhận ra → giữ entry nhưng báo user
+            // 7. Nếu engine không nhận ra → giữ entry nhưng báo user
             if engine == .unknown {
                 importState = ImportState(
                     isImporting: false,

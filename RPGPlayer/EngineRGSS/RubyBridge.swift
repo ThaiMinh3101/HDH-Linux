@@ -38,6 +38,11 @@ final class RubyBridge {
     private let readyLock = NSLock()
     private var isReady = false
 
+    /// M8.1: Callback khi gặp lỗi Errno::ENOENT (thiếu file RTP) trong game loop.
+    /// Nhận tên file bị thiếu. Được gọi trên main thread.
+    /// RGSSViewController set callback này để hiện alert "Game Error" + quay về Library.
+    var onENOENTError: ((String) -> Void)?
+
     // MARK: - Lifecycle
 
     init() {}
@@ -470,9 +475,21 @@ final class RubyBridge {
 
         let rc = mrb_bridge_call_global(mrbPtr, "rpg_player_advance_frame")
         if rc != 0 {
+            let err = String(cString: mrb_bridge_last_error(mrbPtr))
+
+            // M8.1: ENOENT crash handler — bắt lỗi thiếu file (RTP) trong game loop.
+            // Chỉ bắt Errno::ENOENT / "No such file or directory" — các exception
+            // runtime khác vẫn log ⚠️ như cũ (không dừng game).
+            if isENOENTError(err) {
+                let fileName = extractMissingFileName(from: err)
+                DispatchQueue.main.async { [weak self] in
+                    self?.onENOENTError?(fileName)
+                }
+                return
+            }
+
             // Log một lần duy nhất để tránh spam 60 lần/giây.
             if !advanceFrameWarned {
-                let err = String(cString: mrb_bridge_last_error(mrbPtr))
                 print("[RubyBridge] ⚠️  advance_frame chưa được định nghĩa hoặc lỗi: \(err)")
                 advanceFrameWarned = true
             }
@@ -481,6 +498,26 @@ final class RubyBridge {
 
     /// Chỉ log lỗi advance_frame một lần (tránh spam mỗi frame).
     private var advanceFrameWarned = false
+
+    // MARK: - M8.1: ENOENT detection
+
+    /// Kiểm tra lỗi Ruby có phải Errno::ENOENT (thiếu file) không.
+    /// Clean-room: dựa trên message format chuẩn của Ruby exception
+    /// ("Errno::ENOENT - No such file or directory - <path>").
+    private func isENOENTError(_ message: String) -> Bool {
+        message.contains("ENOENT") || message.contains("No such file or directory")
+    }
+
+    /// Extract tên file bị thiếu từ error message.
+    /// Format điển hình: "Errno::ENOENT - No such file or directory - Audio/SE/Cursor1"
+    /// → trả về "Audio/SE/Cursor1". Nếu không có tên file → trả về toàn bộ message.
+    private func extractMissingFileName(from message: String) -> String {
+        let parts = message.components(separatedBy: " - ")
+        if parts.count >= 3 {
+            return parts.last ?? message
+        }
+        return message
+    }
 
     // MARK: - M6.1: Test helper (không cần SpriteRenderer)
 

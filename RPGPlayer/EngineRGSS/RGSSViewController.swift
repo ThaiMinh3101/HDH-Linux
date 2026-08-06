@@ -25,6 +25,10 @@ final class RGSSViewController: UIViewController {
     /// Set by the presenter (LibraryView / GameDetailView) before pushing this VC.
     var gameEntryForTranslation: GameEntry?
 
+    /// M8.1: Đánh dấu game đã dừng vì lỗi ENOENT (thiếu file RTP).
+    /// Ngăn hiện alert nhiều lần + ngăn advanceFrame tiếp tục sau khi đã báo lỗi.
+    private var hasShownENOENTAlert = false
+
     // MARK: - Private properties
 
      private var mtkView: MTKView!
@@ -298,6 +302,18 @@ final class RGSSViewController: UIViewController {
 
         rubyBridge = RubyBridge()
 
+        // M8.1: ENOENT crash handler — khi game loop gặp lỗi thiếu file (RTP):
+        // dừng displayLink + hiện alert "Game Error" + quay về Library.
+        rubyBridge?.onENOENTError = { [weak self] fileName in
+            guard let self, !self.hasShownENOENTAlert else { return }
+            self.hasShownENOENTAlert = true
+
+            DispatchQueue.main.async {
+                self.displayLink?.isPaused = true
+                self.presentMissingFileAlert(missingFile: fileName)
+            }
+        }
+
         let capturedBridge   = rubyBridge!
         let capturedRenderer = renderer!
         let capturedGamePath = gamePath
@@ -346,6 +362,42 @@ final class RGSSViewController: UIViewController {
         // assets, hiển thị placeholder texture nếu thiếu windowskin).
         bridge.start(script: testScript, renderer: renderer,
                      gameRoot: nil, windowRenderer: windowRenderer)
+    }
+
+    // MARK: - M8.1: ENOENT error alert
+
+    /// Hiện alert "Game Error" khi game thiếu file (Errno::ENOENT — thường là
+    /// asset RTP chưa được merge). User tap "Back to Library" → quay về Library
+    /// mà không cần restart app.
+    /// English message (giống tone Empo requirement).
+    ///
+    /// PHẢI gọi trên main thread — closure onENOENTError luôn được trigger từ
+    /// advanceFrame (main thread) và ta bọc thêm DispatchQueue.main.async.
+    private func presentMissingFileAlert(missingFile: String) {
+        let alert = UIAlertController(
+            title: "Game Error",
+            message: """
+            Missing file: \(missingFile)
+
+            This game requires Run-Time Package assets.
+            Merge Audio, Fonts and Graphics from the RPG Maker RTP into the game folder and re-import.
+            """,
+            preferredStyle: .alert
+        )
+        alert.addAction(UIAlertAction(title: "Back to Library", style: .default) { [weak self] _ in
+            guard let self else { return }
+            // Phần B.yêu cầu: pop hoặc dismiss tuỳ theo presentation.
+            if let nav = self.navigationController {
+                nav.popViewController(animated: true)
+            } else {
+                self.dismiss(animated: true)
+            }
+        })
+
+        // Present trên VC đang hiển thị (tránh warning nếu có VC khác present).
+        if let presenter = presentedViewController ?? self {
+            presenter.present(alert, animated: true)
+        }
     }
 
     // MARK: - Error display

@@ -35,6 +35,9 @@ final class GamePlayerViewController: UIViewController {
     // M5: Translation overlay
     private var translationOverlay: TranslationOverlayHostingController?
 
+    // M8.1: Missing asset handler — ngăn hiện alert nhiều lần.
+    private var hasShownMissingAssetAlert = false
+
     // MARK: - Init
 
     init(entry: GameEntry) {
@@ -351,10 +354,56 @@ extension GamePlayerViewController: WKNavigationDelegate {
 
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
         print("[GamePlayer] ❌ didFailProvisionalNavigation: \(error)")
+        handleNavigationFailure(error)
     }
 
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
         print("[GamePlayer] ❌ didFail: \(error)")
+        handleNavigationFailure(error)
+    }
+
+    // MARK: - M8.1: Missing asset handler (MV/MZ)
+
+    /// Hiện alert "Missing Game Asset" khi WKWebView không tải được resource.
+    /// Auto-dismiss về Library khi user tap "Back to Library".
+    /// English message (giống tone Empo requirement).
+    private func handleNavigationFailure(_ error: Error) {
+        guard !hasShownMissingAssetAlert else { return }
+        hasShownMissingAssetAlert = true
+
+        // Extract tên file bị lỗi từ URL trong NSError (nếu có).
+        let fileName: String
+        if let nsError = error as NSError?,
+           let url = nsError.userInfo[NSURLErrorFailingURLStringErrorKey] as? String {
+            fileName = url
+        } else {
+            fileName = error.localizedDescription
+        }
+
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.displayLink?.isPaused = true
+
+            let alert = UIAlertController(
+                title: "Missing Game Asset",
+                message: """
+                Could not load: \(fileName)
+
+                The game may be missing assets.
+                """,
+                preferredStyle: .alert
+            )
+            alert.addAction(UIAlertAction(title: "Back to Library", style: .default) { [weak self] _ in
+                guard let self else { return }
+                if let nav = self.navigationController {
+                    nav.popViewController(animated: true)
+                } else {
+                    self.dismiss(animated: true)
+                }
+            })
+
+            self.present(alert, animated: true)
+        }
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {

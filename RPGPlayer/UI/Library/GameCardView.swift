@@ -8,6 +8,12 @@ struct GameCardView: View {
     let entry: GameEntry
     var onDelete: (() -> Void)? = nil
 
+    // MARK: - M8.1: RTP warning dialog state
+    /// True khi đang hiện dialog cảnh báo RTP (chỉ khi rtpRequirement == .required).
+    @State private var showRTPWarning = false
+    /// Điều hướng programmatically vào màn hình game (sau khi xác nhận dialog).
+    @State private var isNavigating = false
+
     /// True khi engine đã hỗ trợ play.
     /// M6.0: thêm VX Ace (chạy được script load pipeline mruby).
     /// XP/VX chưa hỗ trợ (data format khác — sẽ làm sau).
@@ -27,10 +33,20 @@ struct GameCardView: View {
     var body: some View {
         Group {
             if isPlayable {
-                NavigationLink(destination: destinationView(entry)) {
-                    cardContent
+                ZStack {
+                    // Hidden NavigationLink — trigger programmatically
+                    // (M8.1) sau khi user xác nhận dialog RTP cảnh báo.
+                    NavigationLink(destination: destinationView(entry), isActive: $isNavigating) {
+                        EmptyView()
+                    }
+                    .opacity(0)
+                    .frame(width: 0, height: 0)
+
+                    Button(action: handlePlayTap) {
+                        cardContent
+                    }
+                    .buttonStyle(.plain)
                 }
-                .buttonStyle(.plain)
             } else {
                 cardContent
             }
@@ -42,6 +58,40 @@ struct GameCardView: View {
                 Label("Xoá game", systemImage: "trash")
             }
         }
+        // M8.1: Warning dialog "Run-Time Package Required" — English, same tone as Empo.
+        // Chỉ hiện khi entry.rtpRequirement == .required (game RGSS chưa merge RTP).
+        .alert("Run-Time Package Required", isPresented: $showRTPWarning) {
+            Button("Cancel", role: .cancel) { }
+            Button("Continue Anyway") { isNavigating = true }
+        } message: {
+            Text(rtpWarningMessage)
+        }
+    }
+
+    // MARK: - M8.1: Play tap handling
+
+    /// Tap play: nếu game yêu cầu RTP chưa được merge → hiện cảnh báo trước.
+    /// .none (MV/MZ) và .satisfied (đã merge đủ RTP) → launch thẳng.
+    private func handlePlayTap() {
+        if entry.rtpRequirement == .required {
+            showRTPWarning = true
+        } else {
+            isNavigating = true
+        }
+    }
+
+    /// Message tiếng Anh cho dialog cảnh báo RTP (giống tone Empo).
+    private var rtpWarningMessage: String {
+        """
+        "\(entry.name)" needs shared RPG Maker assets (Audio, Fonts, Graphics) \
+        that are not bundled with the game.
+
+        To fix this: extract the RPG Maker Run-Time Package, then copy the Audio, \
+        Fonts and Graphics folders into the game folder and re-import.
+
+        You can continue without RTP, but the game may crash or have missing \
+        graphics and audio.
+        """
     }
 
     /// Chọn destination theo engine: MV/MZ → web engine, RGSS → mruby/Metal engine.
