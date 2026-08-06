@@ -15,6 +15,7 @@
 #include <mruby/string.h>
 #include <mruby/value.h>
 #include <mruby/variable.h> /* mrb_iv_set, mrb_iv_get */
+#include <pthread.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -28,7 +29,11 @@ static SpriteSetBitmapCallback g_bitmap_callback = NULL;
 static WindowRenderCallback g_window_callback = NULL;
 
 // Stores the last exception message. Sized to hold typical Ruby backtraces.
+// a5 fix: protected by a mutex — mrb_bridge_call_global (main thread,
+// advanceFrame) and mrb_bridge_load_nstring (background thread, start())
+// can be invoked concurrently during the start()→advanceFrame transition.
 static char g_last_error[2048] = {0};
+static pthread_mutex_t g_last_error_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 // ---------------------------------------------------------------------------
 // Sprite method implementations
@@ -280,6 +285,9 @@ static int capture_and_clear_exception(mrb_state *mrb) {
   mrb_value exc = mrb_obj_value(mrb->exc);
   mrb_value msg = mrb_inspect(mrb, exc);
 
+  // a5 fix: writes are mutex-protected (the buffer may be read from another
+  // thread via mrb_bridge_last_error()).
+  pthread_mutex_lock(&g_last_error_mutex);
   if (mrb_string_p(msg)) {
     const char *msg_str = mrb_str_to_cstr(mrb, msg);
     strncpy(g_last_error, msg_str, sizeof(g_last_error) - 1);
@@ -288,6 +296,7 @@ static int capture_and_clear_exception(mrb_state *mrb) {
     strncpy(g_last_error, "Script error (unknown exception)",
             sizeof(g_last_error) - 1);
   }
+  pthread_mutex_unlock(&g_last_error_mutex);
 
   mrb->exc = NULL; // Clear so mrb_state remains usable
   return -1;
@@ -305,7 +314,9 @@ int mrb_bridge_run_script(mrb_state *mrb, const char *script) {
     return capture_and_clear_exception(mrb);
   }
 
+  pthread_mutex_lock(&g_last_error_mutex);
   g_last_error[0] = '\0';
+  pthread_mutex_unlock(&g_last_error_mutex);
   return 0;
 }
 
@@ -334,13 +345,21 @@ int mrb_bridge_load_nstring(mrb_state *mrb, const char *script, size_t len,
     return capture_and_clear_exception(mrb);
   }
 
+  pthread_mutex_lock(&g_last_error_mutex);
   g_last_error[0] = '\0';
+  pthread_mutex_unlock(&g_last_error_mutex);
   return 0;
 }
 
 const char *mrb_bridge_last_error(mrb_state *mrb) {
   (void)mrb;
-  return g_last_error;
+  // a5 fix: read under the mutex to avoid racing a concurrent writer.
+  // The returned pointer is valid only until the next call to a bridge
+  // function that writes g_last_error — contract unchanged from before.
+  pthread_mutex_lock(&g_last_error_mutex);
+  const char *p = g_last_error;
+  pthread_mutex_unlock(&g_last_error_mutex);
+  return p;
 }
 
 void mrb_bridge_set_global_string(mrb_state *mrb, const char *name,
@@ -360,7 +379,9 @@ int mrb_bridge_call_global(mrb_state *mrb, const char *method_name) {
     return capture_and_clear_exception(mrb);
   }
 
+  pthread_mutex_lock(&g_last_error_mutex);
   g_last_error[0] = '\0';
+  pthread_mutex_unlock(&g_last_error_mutex);
   (void)result;
   return 0;
 }

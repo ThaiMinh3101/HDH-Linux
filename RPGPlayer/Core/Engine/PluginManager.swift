@@ -73,7 +73,12 @@ enum PluginManager {
     // MARK: - Parse (via JavaScriptCore)
 
     private static func parsePluginsJS(_ source: String) -> [RPGPlugin]? {
-        let ctx = JSContext()!
+        // a3 fix: JSContext() can return nil on devices with JS disabled.
+        // Guard instead of force-unwrapping to avoid a crash.
+        guard let ctx = JSContext() else {
+            print("[PluginManager] ❌ JSContext() returned nil — cannot parse plugins.js")
+            return nil
+        }
         // Silence JS exceptions — catch them ourselves
         ctx.exceptionHandler = { _, exception in
             print("[PluginManager] JS parse error: \(exception?.toString() ?? "unknown")")

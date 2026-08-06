@@ -57,8 +57,8 @@ final class LibraryStore {
             }
             games = decoded
         } catch {
-            // Nếu decode thất bại (file hỏng), reset về rỗng thay vì crash
-            print("[LibraryStore] Decode thất bại, reset thư viện: \(error)")
+            // If decode fails (corrupted file), reset to empty instead of crashing
+            print("[LibraryStore] Decode failed, resetting library: \(error)")
             games = []
         }
     }
@@ -71,7 +71,7 @@ final class LibraryStore {
             let data = try encoder.encode(games)
             try data.write(to: metadataURL, options: .atomic)
         } catch {
-            print("[LibraryStore] Ghi library.json thất bại: \(error)")
+            print("[LibraryStore] Failed to write library.json: \(error)")
         }
     }
 
@@ -138,8 +138,8 @@ final class LibraryStore {
             if engine == .unknown {
                 importState = ImportState(
                     isImporting: false,
-                    error: "Game \"\(gameName)\" đã được import nhưng không nhận dạng được engine. " +
-                           "Kiểm tra lại cấu trúc thư mục game."
+                    error: "Game \"\(gameName)\" was imported but its engine could not be recognized. " +
+                           "Check the game folder structure."
                 )
             } else {
                 importState = ImportState(isImporting: false)
@@ -150,7 +150,7 @@ final class LibraryStore {
             try? FileManager.default.removeItem(at: destination)
             importState = ImportState(
                 isImporting: false,
-                error: "Import thất bại: \(error.localizedDescription)"
+                error: "Import failed: \(error.localizedDescription)"
             )
         }
     }
@@ -161,7 +161,7 @@ final class LibraryStore {
         do {
             try StorageManager.shared.deleteGame(id: entry.id)
         } catch {
-            print("[LibraryStore] Xoá game thất bại: \(error)")
+            print("[LibraryStore] Failed to delete game: \(error)")
         }
         games.removeAll { $0.id == entry.id }
         save()

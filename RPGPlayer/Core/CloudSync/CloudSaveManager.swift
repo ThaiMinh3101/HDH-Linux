@@ -129,6 +129,15 @@ final class CloudSaveManager: ObservableObject {
         let localURL = StorageManager.shared.libraryMetadataURL
         let cloudURL = cloudRoot.appendingPathComponent("library.json")
 
+        // a7 fix: ensure the cloud directory exists before copyItem.
+        // startSync() creates cloudRoot, but if the app was killed between
+        // createDirectory and this call (or iCloud evicted the folder), the
+        // parent of library.json may not exist → copyItem would throw.
+        try FileManager.default.createDirectory(
+            at: cloudRoot,
+            withIntermediateDirectories: true
+        )
+
         try syncFile(local: localURL, cloud: cloudURL, description: "library.json")
     }
 

@@ -23,7 +23,8 @@ struct LibraryView: View {
 
             NavigationStack {
                 mainContent
-                    .navigationTitle("Thư Viện")
+                    // d3 fix: English UI strings
+                    .navigationTitle("Library")
                     .navigationBarTitleDisplayMode(.large)
                     .toolbar { toolbarContent }
                     .preferredColorScheme(.dark)
@@ -49,20 +50,20 @@ struct LibraryView: View {
             await CloudSaveManager.shared.startSync()
         }
         .confirmationDialog(
-            "Xoá game?",
+            "Delete Game?",
             isPresented: $showDeleteConfirm,
             titleVisibility: .visible
         ) {
-            Button("Xoá game và save", role: .destructive) {
+            Button("Delete Game and Saves", role: .destructive) {
                 if let entry = gameToDelete {
                     store.deleteGame(entry)
                 }
                 gameToDelete = nil
             }
-            Button("Huỷ", role: .cancel) { gameToDelete = nil }
+            Button("Cancel", role: .cancel) { gameToDelete = nil }
         } message: {
             if let name = gameToDelete?.name {
-                Text("Xoá \"\(name)\" sẽ xoá toàn bộ file game và save game. Không thể hoàn tác.")
+                Text("Deleting \"\(name)\" will remove all game files and save data. This cannot be undone.")
             }
         }
         .onChange(of: store.importState.isImporting) { _, newValue in
@@ -120,11 +121,11 @@ struct LibraryView: View {
             }
 
             VStack(spacing: 8) {
-                Text("Thư viện trống")
+                Text("No Games Yet")
                     .font(.title2.weight(.semibold))
                     .foregroundStyle(.white)
 
-                Text("Nhấn nút \"+\" để import game RPG Maker\ntừ Files app của bạn (.zip)")
+                Text("Tap \"+\" to import your RPG Maker game\nfrom the Files app (.zip)")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
@@ -204,7 +205,7 @@ struct LibraryView: View {
                     .font(.body)
                     .foregroundStyle(.secondary)
             }
-            .accessibilityLabel("Cài đặt")
+            .accessibilityLabel("Settings")
         }
         ToolbarItem(placement: .topBarTrailing) {
             Button {

@@ -68,10 +68,10 @@ struct PluginManagerView: View {
             }
             .navigationTitle("Plugins")
             .navigationBarTitleDisplayMode(.inline)
-            .searchable(text: $searchText, prompt: "Tìm plugin...")
+            .searchable(text: $searchText, prompt: "Search plugins...")
             .toolbar { toolbarContent }
             .task { await loadPlugins() }
-            .alert("Lỗi khi lưu", isPresented: Binding(
+            .alert("Save Error", isPresented: Binding(
                 get:  { saveError != nil },
                 set:  { if !$0 { saveError = nil } }
             )) {
@@ -88,7 +88,7 @@ struct PluginManagerView: View {
     @ToolbarContentBuilder
     private var toolbarContent: some ToolbarContent {
         ToolbarItem(placement: .topBarLeading) {
-            Button("Huỷ") {
+            Button("Cancel") {
                 dismiss()
             }
             .foregroundStyle(.secondary)
@@ -97,7 +97,7 @@ struct PluginManagerView: View {
             if isSaving {
                 ProgressView().tint(.purple)
             } else {
-                Button("Lưu") {
+                Button("Save") {
                     Task { await save() }
                 }
                 .fontWeight(.semibold)
@@ -116,17 +116,17 @@ struct PluginManagerView: View {
                 HStack(spacing: 16) {
                     statBadge(
                         value: "\(enabledCount)",
-                        label: "Bật",
+                        label: "Enabled",
                         color: .green
                     )
                     statBadge(
                         value: "\(plugins.count - enabledCount)",
-                        label: "Tắt",
+                        label: "Disabled",
                         color: .orange
                     )
                     statBadge(
                         value: "\(plugins.count)",
-                        label: "Tổng",
+                        label: "Total",
                         color: .secondary
                     )
                     Spacer()
@@ -134,7 +134,7 @@ struct PluginManagerView: View {
                 .listRowBackground(Color(white: 0.12))
 
                 if isDirty {
-                    Label("Có thay đổi chưa lưu", systemImage: "exclamationmark.triangle.fill")
+                    Label("Unsaved changes", systemImage: "exclamationmark.triangle.fill")
                         .font(.caption)
                         .foregroundStyle(.orange)
                         .listRowBackground(Color(white: 0.12))
@@ -144,7 +144,7 @@ struct PluginManagerView: View {
             // Warning
             Section {
                 Label {
-                    Text("Tắt plugin có thể gây lỗi nếu game phụ thuộc vào plugin đó.")
+                    Text("Disabling plugins may cause errors if the game depends on them.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 } icon: {
@@ -229,7 +229,7 @@ struct PluginManagerView: View {
             ProgressView()
                 .tint(.purple)
                 .scaleEffect(1.3)
-            Text("Đang đọc plugins.js…")
+            Text("Reading plugins.js…")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
         }
@@ -253,7 +253,7 @@ struct PluginManagerView: View {
             Image(systemName: "puzzlepiece.extension")
                 .font(.system(size: 44, weight: .thin))
                 .foregroundStyle(.secondary)
-            Text("Game này không có plugin nào")
+            Text("This game has no plugins")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
         }
@@ -280,7 +280,7 @@ struct PluginManagerView: View {
             // Snapshot original statuses to detect dirty state
             originalStatuses = Dictionary(uniqueKeysWithValues: loaded.map { ($0.name, $0.status) })
         } else {
-            loadError = "Không tìm thấy js/plugins.js trong game này.\nGame có thể không dùng plugin."
+            loadError = "Could not find js/plugins.js in this game.\nThe game may not use plugins."
         }
     }
 
@@ -310,7 +310,7 @@ struct PluginManagerView: View {
         isSaving = false
 
         if let error {
-            saveError = "Lưu thất bại: \(error.localizedDescription)"
+            saveError = "Save failed: \(error.localizedDescription)"
         } else {
             // Update snapshot
             originalStatuses = Dictionary(uniqueKeysWithValues: plugins.map { ($0.name, $0.status) })

@@ -248,8 +248,12 @@ struct TranslationOverlayView: View {
 
     private func resetFadeTimer() {
         fadeTimer?.invalidate()
-        fadeTimer = Timer.scheduledTimer(withTimeInterval: FADE_DELAY, repeats: false) { _ in
-            Task { @MainActor in hideOverlay() }
+        // a4 fix: capture self weakly — Timer.scheduledTimer retains its
+        // closure, and the closure retaining self would create a retain cycle
+        // (self → fadeTimer → closure → self) that leaks the view after the
+        // game exits.
+        fadeTimer = Timer.scheduledTimer(withTimeInterval: FADE_DELAY, repeats: false) { [weak self] _ in
+            Task { @MainActor in self?.hideOverlay() }
         }
     }
 }

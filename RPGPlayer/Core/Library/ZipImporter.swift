@@ -13,16 +13,17 @@ struct ZipImporter {
         case extractionFailed(underlying: Error)
         case emptyArchive
 
+        /// d2 fix: tất cả dialog/error message dùng tiếng Anh (M8 requirement).
         var errorDescription: String? {
             switch self {
             case .notAZipFile:
-                return "File không phải định dạng ZIP hợp lệ."
+                return "The file is not a valid ZIP archive."
             case .destinationNotWritable:
-                return "Không thể ghi vào thư mục đích."
+                return "Cannot write to the destination folder."
             case .extractionFailed(let err):
-                return "Giải nén thất bại: \(err.localizedDescription)"
+                return "Extraction failed: \(err.localizedDescription)"
             case .emptyArchive:
-                return "File ZIP rỗng hoặc không chứa file game hợp lệ."
+                return "The ZIP archive is empty or contains no valid game files."
             }
         }
     }

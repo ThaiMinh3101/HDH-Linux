@@ -30,7 +30,8 @@ struct CleanupView: View {
             Color(white: 0.08).ignoresSafeArea()
             content
         }
-        .navigationTitle("Bộ nhớ")
+        // d5 fix: English UI strings
+        .navigationTitle("Storage")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
@@ -45,20 +46,20 @@ struct CleanupView: View {
         }
         .task { await loadSizes() }
         .confirmationDialog(
-            "Xoá game?",
+            "Delete Game?",
             isPresented: $showDeleteConfirm,
             titleVisibility: .visible
         ) {
-            Button("Xoá game và save", role: .destructive) {
+            Button("Delete Game and Saves", role: .destructive) {
                 if let entry = gameToDelete {
                     deleteGame(entry)
                 }
                 gameToDelete = nil
             }
-            Button("Huỷ", role: .cancel) { gameToDelete = nil }
+            Button("Cancel", role: .cancel) { gameToDelete = nil }
         } message: {
             if let name = gameToDelete?.name {
-                Text("Xoá \"\(name)\" sẽ xoá toàn bộ file game và save. Không thể hoàn tác.")
+                Text("Deleting \"\(name)\" will remove all game files and saves. This cannot be undone.")
             }
         }
         .refreshable {
@@ -71,7 +72,7 @@ struct CleanupView: View {
     @ViewBuilder
     private var content: some View {
         if isLoading {
-            ProgressView("Đang tính dung lượng…")
+            ProgressView("Calculating storage…")
                 .tint(.purple)
         } else if items.isEmpty {
             emptyView
@@ -106,7 +107,7 @@ struct CleanupView: View {
         let total      = totalAsset + totalCache + totalSaves
 
         return VStack(alignment: .leading, spacing: 10) {
-            Text("Tổng dung lượng")
+            Text("Total Size")
                 .font(.headline)
                 .foregroundStyle(.white)
 
@@ -169,7 +170,7 @@ struct CleanupView: View {
                 Button {
                     deleteCacheFor(item.entry)
                 } label: {
-                    Label("Xóa cache", systemImage: "trash.slash")
+                    Label("Delete Cache", systemImage: "trash.slash")
                         .font(.caption.weight(.medium))
                         .foregroundStyle(item.cacheBytes > 0 ? .orange : .secondary)
                 }
@@ -185,7 +186,7 @@ struct CleanupView: View {
                     gameToDelete   = item.entry
                     showDeleteConfirm = true
                 } label: {
-                    Label("Xóa game", systemImage: "trash")
+                    Label("Delete Game", systemImage: "trash")
                         .font(.caption.weight(.medium))
                 }
                 .buttonStyle(.bordered)
@@ -242,7 +243,7 @@ struct CleanupView: View {
             Image(systemName: "externaldrive")
                 .font(.system(size: 44, weight: .thin))
                 .foregroundStyle(.secondary)
-            Text("Chưa có game nào")
+            Text("No games yet")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
         }

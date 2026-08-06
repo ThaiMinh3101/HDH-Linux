@@ -62,18 +62,29 @@ static int collect_ivar(mrb_state *mrb, mrb_sym sym, mrb_value val, void *p) {
 }
 
 // ── mrb_value → RGSSValue (for Marshal.dump) ─────────────────────────────
-// We use a simple bump-arena for the value tree; freed after encoding.
+// Dump-side always uses malloc (no bump arena). The `unused` parameter is
+// NULL — kept as a void* so the compiler rejects any accidental call that
+// passes an arena (prevents stack corruption, see b1 fix).
 
-static RGSSValue *mrb_to_rgss(mrb_state *mrb, mrb_value v, RGSSArena *arena);
+static RGSSValue *mrb_to_rgss(mrb_state *mrb, mrb_value v, void *unused);
 
 // Recursively convert an mrb_value to RGSSValue.
-static RGSSValue *mrb_to_rgss(mrb_state *mrb, mrb_value v, RGSSArena *arena) {
-  (void)arena; /* dump-side uses malloc; arena param kept for recursive call
-                  signature */
+static RGSSValue *mrb_to_rgss(mrb_state *mrb, mrb_value v, void *unused) {
+  (void)unused;
   // Dump-side always uses malloc (arena is only for decode-side bump alloc).
+  //
+  // GC SAFETY (a1 fix): mrb_hash_keys / mrb_ary_ref / mrb_class_path create
+  // new mrb_values on the mruby arena. Without protection, a GC run during
+  // deep recursion can move/collect values we still reference. We save the
+  // arena mark at entry and restore it at exit — all data is copied into
+  // malloc'd C structs before returning, so no mrb_value outlives this call.
+  int ai = mrb_gc_arena_save(mrb);
+
   RGSSValue *rv = malloc(sizeof(RGSSValue));
-  if (!rv)
+  if (!rv) {
+    mrb_gc_arena_restore(mrb, ai);
     return NULL;
+  }
   memset(rv, 0, sizeof(RGSSValue));
 
   switch (mrb_type(v)) {
@@ -123,7 +134,7 @@ static RGSSValue *mrb_to_rgss(mrb_state *mrb, mrb_value v, RGSSArena *arena) {
     rv->as.arr.items =
         alen > 0 ? malloc((size_t)alen * sizeof(RGSSValue *)) : NULL;
     for (mrb_int i = 0; i < alen; i++) {
-      rv->as.arr.items[i] = mrb_to_rgss(mrb, mrb_ary_ref(mrb, v, i), arena);
+      rv->as.arr.items[i] = mrb_to_rgss(mrb, mrb_ary_ref(mrb, v, i), NULL);
     }
     break;
   }
@@ -139,8 +150,8 @@ static RGSSValue *mrb_to_rgss(mrb_state *mrb, mrb_value v, RGSSArena *arena) {
     for (mrb_int i = 0; i < hlen; i++) {
       mrb_value k = mrb_ary_ref(mrb, keys, i);
       mrb_value vv = mrb_hash_get(mrb, v, k);
-      rv->as.hash.keys[i] = mrb_to_rgss(mrb, k, arena);
-      rv->as.hash.values[i] = mrb_to_rgss(mrb, vv, arena);
+      rv->as.hash.keys[i] = mrb_to_rgss(mrb, k, NULL);
+      rv->as.hash.values[i] = mrb_to_rgss(mrb, vv, NULL);
     }
     break;
   }
@@ -169,8 +180,8 @@ static RGSSValue *mrb_to_rgss(mrb_state *mrb, mrb_value v, RGSSArena *arena) {
     for (mrb_int i = 0; i < icount; i++) {
       // Convert sym name to mrb_value symbol for RGSSValue
       mrb_value iname_sym = mrb_symbol_value(ctx.syms[i]);
-      rv->as.obj.ivars.keys[i] = mrb_to_rgss(mrb, iname_sym, arena);
-      rv->as.obj.ivars.values[i] = mrb_to_rgss(mrb, ctx.vals[i], arena);
+      rv->as.obj.ivars.keys[i] = mrb_to_rgss(mrb, iname_sym, NULL);
+      rv->as.obj.ivars.values[i] = mrb_to_rgss(mrb, ctx.vals[i], NULL);
     }
     break;
   }
@@ -179,6 +190,10 @@ static RGSSValue *mrb_to_rgss(mrb_state *mrb, mrb_value v, RGSSArena *arena) {
     rv->type = RGSS_VAL_NIL;
     break;
   }
+
+  // a1 fix: restore GC arena mark — all data has been copied into malloc'd
+  // C structs, so no mrb_value outlives this call.
+  mrb_gc_arena_restore(mrb, ai);
   return rv;
 }
 
@@ -364,11 +379,10 @@ static mrb_value mrb_marshal_dump(mrb_state *mrb, mrb_value self) {
   mrb_value obj;
   mrb_get_args(mrb, "o", &obj);
 
-  // We use a dummy arena for mrb_to_rgss (it won't actually use it —
-  // dump side uses malloc). Create a minimal arena just to satisfy the API.
-  RGSSArena dummy = {.base = (uint8_t *)&dummy, .cap = 0, .used = 0};
-
-  RGSSValue *root = mrb_to_rgss(mrb, obj, &dummy);
+  // b1 fix: dump-side uses malloc, no bump arena. Pass NULL — the `unused`
+  // parameter is never dereferenced, so there is no stack-corruption risk
+  // (previously a dummy arena pointed into the stack).
+  RGSSValue *root = mrb_to_rgss(mrb, obj, NULL);
   if (!root) {
     mrb_raise(mrb, mrb_class_get(mrb, "RuntimeError"),
               "Marshal.dump: conversion failed");

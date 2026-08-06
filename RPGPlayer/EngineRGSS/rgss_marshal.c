@@ -489,8 +489,19 @@ static RGSSValue *decode_value(RGSSMarshalDecoder *d) {
     return decode_hash(d);
   }
   case '}': {
-    // Hash with default value — treat default as nil, then decode as hash
-    return decode_hash(d); // default value follows; decode and discard
+    // Hash with default value (Ruby Marshal '}' tag).
+    // Format: '}' <count> <key/value pairs...> <default_value>
+    // a6 fix: decode_hash() reads count + pairs, but the trailing default
+    // value must ALSO be consumed — otherwise the stream position is wrong
+    // and any subsequent object reference / value decodes incorrectly.
+    RGSSValue *h = decode_hash(d);
+    if (d->last_error != RGSS_MARSHAL_OK)
+      return NULL;
+    // Consume and discard the default value (we don't need it at this layer).
+    decode_value(d);
+    if (d->last_error != RGSS_MARSHAL_OK)
+      return NULL;
+    return h;
   }
   case 'o': {
     return decode_object(d);
@@ -498,6 +509,13 @@ static RGSSValue *decode_value(RGSSMarshalDecoder *d) {
   case 'I': {
     // Instance variable wrapper: decode inner value, then skip ivar pairs
     // Most common use: String with encoding annotation ("E" => true/false).
+    //
+    // a2 fix: DO NOT call register_object(inner) here. The inner value has
+    // ALREADY been registered by its own decoder (decode_string registers at
+    // construction, decode_array/decode_hash/decode_object register at
+    // allocation). Registering it again duplicates the entry in obj_table —
+    // a later '@' back-reference would then resolve to the WRONG index,
+    // producing a corrupted object tree.
     RGSSValue *inner = decode_value(d);
     if (d->last_error != RGSS_MARSHAL_OK)
       return NULL;
@@ -510,8 +528,6 @@ static RGSSValue *decode_value(RGSSMarshalDecoder *d) {
       if (d->last_error != RGSS_MARSHAL_OK)
         return NULL;
     }
-    // Register the inner value as the object for back-reference purposes
-    register_object(d, inner);
     return inner;
   }
   default: {

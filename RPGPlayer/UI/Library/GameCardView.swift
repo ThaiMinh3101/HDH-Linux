@@ -52,10 +52,11 @@ struct GameCardView: View {
             }
         }
         .contextMenu {
+            // d4 fix: English UI strings
             Button(role: .destructive) {
                 onDelete?()
             } label: {
-                Label("Xoá game", systemImage: "trash")
+                Label("Delete Game", systemImage: "trash")
             }
         }
         // M8.1: Warning dialog "Run-Time Package Required" — English, same tone as Empo.

@@ -44,7 +44,7 @@ struct SettingsView: View {
                                     Text("iCloud Sync")
                                         .font(.body.weight(.medium))
                                         .foregroundStyle(.white)
-                                    Text("Đồng bộ save game giữa các thiết bị")
+                                    Text("Sync save games across devices")
                                         .font(.caption)
                                         .foregroundStyle(.secondary)
                                 }
@@ -75,7 +75,7 @@ struct SettingsView: View {
                             Button {
                                 Task { await cloudSync.startSync() }
                             } label: {
-                                Label("Đồng bộ ngay", systemImage: "arrow.triangle.2.circlepath")
+                                Label("Sync Now", systemImage: "arrow.triangle.2.circlepath")
                                     .font(.subheadline.weight(.medium))
                                     .foregroundStyle(.blue)
                             }
@@ -91,16 +91,16 @@ struct SettingsView: View {
                     } footer: {
                         if !CloudSaveManager.isICloudAvailable {
                             Text("""
-                                ⚠️ iCloud không khả dụng.
-                                Tính năng này yêu cầu:
-                                • Đăng nhập iCloud trên thiết bị
-                                • App được ký bằng Apple Developer account ($99/năm)
-                                (AltStore với free Apple ID không hỗ trợ iCloud entitlement)
+                                ⚠️ iCloud is unavailable.
+                                This feature requires:
+                                • Signed in to iCloud on this device
+                                • App signed with an Apple Developer account ($99/year)
+                                (AltStore with a free Apple ID does not support the iCloud entitlement)
                                 """)
                                 .font(.caption)
                                 .foregroundStyle(.orange)
                         } else {
-                            Text("Save game được lưu vào iCloud Drive/RPGPlayer/, ưu tiên file có thời gian sửa đổi mới hơn. Nếu xung đột không rõ ràng (< 2s), cả hai file được giữ nguyên.")
+                            Text("Save games are stored in iCloud Drive/RPGPlayer/. The file with the newer modification date wins. If the conflict is ambiguous (< 2s), both files are kept.")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
@@ -117,10 +117,10 @@ struct SettingsView: View {
                         } label: {
                             Label {
                                 VStack(alignment: .leading, spacing: 2) {
-                                    Text("Ngôn ngữ dịch mặc định")
+                                    Text("Default Translation Language")
                                         .font(.body.weight(.medium))
                                         .foregroundStyle(.white)
-                                    Text("Game chưa chọn riêng sẽ dùng mục này")
+                                    Text("Games without their own setting use this")
                                         .font(.caption)
                                         .foregroundStyle(.secondary)
                                 }
@@ -132,12 +132,12 @@ struct SettingsView: View {
                         .pickerStyle(.navigationLink)
                         .tint(.cyan)
                     } header: {
-                        Text("Dịch thuật")
+                        Text("Translation")
                             .foregroundStyle(.secondary)
                     } footer: {
                         Text("""
-                            Dùng Apple Translation (on-device, iOS 17.4+). Ngôn ngữ nguồn tự động nhận diện. \
-                            Mỗi game có thể đặt ngôn ngữ riêng từ menu trong game.
+                            Uses Apple Translation (on-device, iOS 17.4+). Source language is auto-detected. \
+                            Each game can set its own language from the in-game menu.
                             """)
                             .font(.caption)
                             .foregroundStyle(.secondary)
@@ -149,10 +149,10 @@ struct SettingsView: View {
                         NavigationLink(destination: CleanupView()) {
                             Label {
                                 VStack(alignment: .leading, spacing: 2) {
-                                    Text("Quản lý bộ nhớ")
+                                    Text("Storage Management")
                                         .font(.body.weight(.medium))
                                         .foregroundStyle(.white)
-                                    Text("Xem dung lượng, xóa cache hoặc xóa game")
+                                    Text("View size, delete cache, or delete games")
                                         .font(.caption)
                                         .foregroundStyle(.secondary)
                                 }
@@ -162,7 +162,7 @@ struct SettingsView: View {
                             }
                         }
                     } header: {
-                        Text("Bộ nhớ")
+                        Text("Storage")
                             .foregroundStyle(.secondary)
                     }
                     .listRowBackground(Color(white: 0.12))
@@ -170,22 +170,22 @@ struct SettingsView: View {
                     // ── About ─────────────────────────────────────────────
                     Section {
                         aboutRow(icon: "gamecontroller", label: "Engine RGSS", value: "mruby (MIT)")
-                        aboutRow(icon: "doc.zipper", label: "Giải nén ZIP", value: "ZIPFoundation (MIT)")
+                        aboutRow(icon: "doc.zipper", label: "ZIP Extraction", value: "ZIPFoundation (MIT)")
                         aboutRow(icon: "cpu", label: "Renderer", value: "MetalKit")
-                        aboutRow(icon: "square.and.arrow.down", label: "Phân phối", value: "AltStore (sideload)")
+                        aboutRow(icon: "square.and.arrow.down", label: "Distribution", value: "AltStore (sideload)")
                     } header: {
-                        Text("Thông tin")
+                        Text("About")
                             .foregroundStyle(.secondary)
                     }
                     .listRowBackground(Color(white: 0.12))
                 }
                 .scrollContentBackground(.hidden)
             }
-            .navigationTitle("Cài đặt")
+            .navigationTitle("Settings")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button("Xong") { dismiss() }
+                    Button("Done") { dismiss() }
                         .font(.body.weight(.semibold))
                         .foregroundStyle(.purple)
                 }
@@ -214,18 +214,18 @@ struct SettingsView: View {
     private var statusText: String {
         switch cloudSync.status {
         case .disabled:
-            return "Chưa bật"
+            return "Off"
         case .idle:
-            return "Sẵn sàng"
+            return "Ready"
         case .syncing:
-            return "Đang đồng bộ…"
+            return "Syncing…"
         case .synced(let date):
             let fmt = RelativeDateTimeFormatter()
             fmt.unitsStyle = .short
-            return "Đã đồng bộ \(fmt.localizedString(for: date, relativeTo: Date()))"
+            return "Synced \(fmt.localizedString(for: date, relativeTo: Date()))"
         case .error(let msg):
             // Show truncated error
-            return "Lỗi: \(msg.prefix(60))"
+            return "Error: \(msg.prefix(60))"
         }
     }
 

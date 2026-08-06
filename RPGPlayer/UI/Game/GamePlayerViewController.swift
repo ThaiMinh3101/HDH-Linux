@@ -26,6 +26,12 @@ final class GamePlayerViewController: UIViewController {
     private var displayLink: CADisplayLink?
     /// Previous merged input — only send JS update when state changes.
     private var previousMergedInput = InputState.neutral
+    /// c2 fix: throttle JS pushes to ~30 Hz. RPG games don't need 60 Hz input
+    /// updates — evaluateJavaScript has ~0.5-2ms overhead per call, so pushing
+    /// every frame when an analog stick is held costs ~30-120ms/s of main-thread
+    /// time. 30 Hz is imperceptible for menu/d-pad navigation.
+    private var lastJSPushTime: CFTimeInterval = 0
+    private let jsPushInterval: CFTimeInterval = 1.0 / 30.0
     /// Hosting controller for the SwiftUI VirtualDpadView overlay.
     private var dpadHostingController: UIHostingController<VirtualDpadView>?
     private var gamepadCancellable: AnyCancellable?
@@ -284,6 +290,13 @@ final class GamePlayerViewController: UIViewController {
         let current = GamepadManager.shared.mergedInput
         guard current != previousMergedInput else { return }
         previousMergedInput = current
+
+        // c2 fix: throttle to ~30 Hz. When an analog stick is held, the input
+        // state changes every frame (float values) — pushing JS 60×/s is
+        // wasteful. 30 Hz is smooth enough for RPG input.
+        let now = CACurrentMediaTime()
+        guard now - lastJSPushTime >= jsPushInterval else { return }
+        lastJSPushTime = now
 
         // Build a compact JSON object matching the fields GamepadBridge.js expects.
         let json = stateToJSON(current)

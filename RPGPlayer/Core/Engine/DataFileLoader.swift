@@ -56,11 +56,11 @@ enum DataFileLoaderError: Error, LocalizedError {
     var errorDescription: String? {
         switch self {
         case .fileNotFound(let name):
-            return "Data/\(name).rvdata2 không tồn tại trong game"
+            return "Data/\(name).rvdata2 does not exist in the game"
         case .marshal(let msg):
-            return "Lỗi Marshal: \(msg)"
+            return "Marshal error: \(msg)"
         case .invalidStructure(let msg):
-            return "Cấu trúc .rvdata2 không hợp lệ: \(msg)"
+            return "Invalid .rvdata2 structure: \(msg)"
         }
     }
 }
@@ -84,7 +84,7 @@ enum DataFileLoader {
 
         // ── Decode trong arena ──
         guard let arena = rgss_arena_create(arenaSize) else {
-            throw DataFileLoaderError.marshal("Không đủ bộ nhớ để tạo arena decode")
+            throw DataFileLoaderError.marshal("Not enough memory to create decode arena")
         }
         defer { rgss_arena_destroy(arena) }
 
@@ -111,7 +111,7 @@ enum DataFileLoader {
         // ── Root phải là OBJECT class RPG::Map ──
         guard let classNamePtr = rgss_value_object_class_name(loadedRoot),
               String(cString: classNamePtr) == "RPG::Map" else {
-            throw DataFileLoaderError.invalidStructure("\(fileName).rvdata2 root phải là RPG::Map")
+            throw DataFileLoaderError.invalidStructure("\(fileName).rvdata2 root must be RPG::Map")
         }
 
         // ── Extract (trong scope arena) ──
@@ -141,7 +141,7 @@ enum DataFileLoader {
         }
 
         guard width > 0, height > 0 else {
-            throw DataFileLoaderError.invalidStructure("\(fileName).rvdata2 thiếu width/height")
+            throw DataFileLoaderError.invalidStructure("\(fileName).rvdata2 missing width/height")
         }
 
         return RGSSMapData(mapID: mapID, width: width, height: height,
@@ -159,7 +159,7 @@ enum DataFileLoader {
 
         // ── Decode trong arena ──
         guard let arena = rgss_arena_create(arenaSize) else {
-            throw DataFileLoaderError.marshal("Không đủ bộ nhớ để tạo arena decode")
+            throw DataFileLoaderError.marshal("Not enough memory to create decode arena")
         }
         defer { rgss_arena_destroy(arena) }
 
@@ -185,7 +185,7 @@ enum DataFileLoader {
 
         // ── Root phải là Array of RPG::Tileset ──
         guard rgss_value_type(loadedRoot) == RGSS_VAL_ARRAY else {
-            throw DataFileLoaderError.invalidStructure("Tilesets.rvdata2 root phải là Array")
+            throw DataFileLoaderError.invalidStructure("Tilesets.rvdata2 root must be an Array")
         }
 
         // ── Extract (trong scope arena) ──
@@ -237,7 +237,7 @@ enum DataFileLoader {
 
         // ── Decode trong arena ──
         guard let arena = rgss_arena_create(arenaSize) else {
-            throw DataFileLoaderError.marshal("Không đủ bộ nhớ để tạo arena decode")
+            throw DataFileLoaderError.marshal("Not enough memory to create decode arena")
         }
         defer { rgss_arena_destroy(arena) }
 
@@ -264,7 +264,7 @@ enum DataFileLoader {
         // ── Root phải là OBJECT class RPG::System ──
         guard let classNamePtr = rgss_value_object_class_name(loadedRoot),
               String(cString: classNamePtr) == "RPG::System" else {
-            throw DataFileLoaderError.invalidStructure("System.rvdata2 root phải là RPG::System")
+            throw DataFileLoaderError.invalidStructure("System.rvdata2 root must be RPG::System")
         }
 
         // ── Extract (trong scope arena) ──

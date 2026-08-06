@@ -7,6 +7,9 @@ import SwiftUI
 import UIKit
 
 /// Wraps `RGSSViewController` for use in SwiftUI navigation hierarchies.
+/// d1: Deprecated — sử dụng `GameDetailViewRGSS` (GameDetailViewRGSS.swift)
+/// làm wrapper chính thức. File này chỉ giữ lại cho preview M1b.
+@available(*, deprecated, message: "Use GameDetailViewRGSS instead")
 struct RGSSEngineView: UIViewControllerRepresentable {
 
     /// Root directory of the RGSS game (optional for M1b test mode).

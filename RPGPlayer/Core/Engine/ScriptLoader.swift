@@ -33,15 +33,15 @@ enum ScriptLoaderError: Error, LocalizedError {
     var errorDescription: String? {
         switch self {
         case .fileNotFound:
-            return "Data/Scripts.rvdata2 không tồn tại trong game"
+            return "Data/Scripts.rvdata2 does not exist in the game"
         case .marshal(let msg):
-            return "Lỗi Marshal: \(msg)"
+            return "Marshal error: \(msg)"
         case .invalidStructure(let msg):
-            return "Cấu trúc Scripts.rvdata2 không hợp lệ: \(msg)"
+            return "Invalid Scripts.rvdata2 structure: \(msg)"
         case .zlib:
-            return "Giải nén zlib thất bại"
+            return "zlib decompression failed"
         case .invalidUTF8(let name):
-            return "Script \"\(name)\" không phải UTF-8 hợp lệ"
+            return "Script \"\(name)\" is not valid UTF-8"
         }
     }
 }
@@ -93,13 +93,13 @@ enum ScriptLoader {
     /// Đọc + giải nén script từ dữ liệu Marshal thô (dùng cho unit test).
     static func loadScripts(fromData data: Data) throws -> [RGSSScript] {
         guard data.count >= 2, data[0] == 0x04, data[1] == 0x08 else {
-            throw ScriptLoaderError.marshal("Không phải Marshal 4.8 (thiếu header 04 08)")
+            throw ScriptLoaderError.marshal("Not a Marshal 4.8 stream (missing 04 08 header)")
         }
 
         // Decode + extract trong CÙNG scope — tree sống trong arena, phải dùng
         // trước khi arena bị destroy.
         guard let arena = rgss_arena_create(arenaSize) else {
-            throw ScriptLoaderError.marshal("Không đủ bộ nhớ để tạo arena decode")
+            throw ScriptLoaderError.marshal("Not enough memory to create decode arena")
         }
         defer { rgss_arena_destroy(arena) }
 
@@ -140,7 +140,7 @@ enum ScriptLoader {
         // C enum values import vào Swift như global constants (RGSSValueType struct).
         // So sánh trực tiếp với constant, không ép rawValue.
         guard rgss_value_type(root) == RGSS_VAL_ARRAY else {
-            throw ScriptLoaderError.invalidStructure("Root phải là Array")
+            throw ScriptLoaderError.invalidStructure("Root must be an Array")
         }
 
         let rootCount = Int(rgss_value_array_count(root))
@@ -149,26 +149,26 @@ enum ScriptLoader {
 
         for i in 0..<rootCount {
             guard let elemPtr = rgss_value_array_item(root, i) else {
-                throw ScriptLoaderError.invalidStructure("Script \(i): phần tử null")
+                throw ScriptLoaderError.invalidStructure("Script \(i): null element")
             }
             guard rgss_value_type(elemPtr) == RGSS_VAL_ARRAY else {
-                throw ScriptLoaderError.invalidStructure("Script \(i): phải là Array [id, name, data]")
+                throw ScriptLoaderError.invalidStructure("Script \(i): must be an Array [id, name, data]")
             }
             guard rgss_value_array_count(elemPtr) == 3 else {
-                throw ScriptLoaderError.invalidStructure("Script \(i): phải có đúng 3 phần tử [id, name, data]")
+                throw ScriptLoaderError.invalidStructure("Script \(i): must have exactly 3 elements [id, name, data]")
             }
 
             // ── id (Integer) ──
             guard let idPtr = rgss_value_array_item(elemPtr, 0),
                   rgss_value_type(idPtr) == RGSS_VAL_INT else {
-                throw ScriptLoaderError.invalidStructure("Script \(i): id phải là Integer")
+                throw ScriptLoaderError.invalidStructure("Script \(i): id must be an Integer")
             }
             let id = Int(rgss_value_int(idPtr))
 
             // ── name (String) ──
             guard let namePtr = rgss_value_array_item(elemPtr, 1),
                   rgss_value_type(namePtr) == RGSS_VAL_STRING else {
-                throw ScriptLoaderError.invalidStructure("Script \(i): name phải là String")
+                throw ScriptLoaderError.invalidStructure("Script \(i): name must be a String")
             }
             let nameDataLen = Int(rgss_value_string_len(namePtr))
             let name: String
@@ -184,7 +184,7 @@ enum ScriptLoader {
             // ── compressed_data (String → zlib deflate) ──
             guard let dataPtr = rgss_value_array_item(elemPtr, 2),
                   rgss_value_type(dataPtr) == RGSS_VAL_STRING else {
-                throw ScriptLoaderError.invalidStructure("Script \(i): compressed data phải là String")
+                throw ScriptLoaderError.invalidStructure("Script \(i): compressed data must be a String")
             }
             let compLen = Int(rgss_value_string_len(dataPtr))
             guard compLen > 0, let compBase = rgss_value_string_data(dataPtr) else {
@@ -210,39 +210,83 @@ enum ScriptLoader {
     /// Giải nén zlib deflate bằng Compression framework (COMPRESSION_ZLIB).
     /// Trả nil nếu dữ liệu hỏng hoặc output vượt quá giới hạn an toàn.
     ///
-    /// Lưu ý: dùng `compression_decode_buffer` với capacity tăng dần thay vì
-    /// streaming API để tránh lỗi edge-case khi set COMPRESSION_STREAM_FINALIZE
-    /// giữa chừng. Data .rvdata2 thường nhỏ (< 1 MB), retry decode là chấp nhận được.
+    /// c3 fix: dùng `compression_stream` (streaming API) thay vì
+    /// `compression_decode_buffer` với buffer doubling + re-decode từ đầu.
+    /// Streaming decode một lần duy nhất, append vào output — tránh copy
+    /// toàn bộ dữ liệu nhiều lần (O(n²) worst case với input lớn).
     private static func zlibDecompress(_ data: Data) -> Data? {
-        var capacity = max(data.count * 4, 64 * 1024)  // ước lượng 4x + tối thiểu 64 KB
+        // Streaming decode — một pass duy nhất, không re-decode từ đầu.
         var output = Data()
+        output.reserveCapacity(max(data.count * 4, 64 * 1024))
 
-        while capacity <= maxDecompressedSize {
-            var buffer = [UInt8](repeating: 0, count: capacity)
+        let status = data.withUnsafeBytes { (src: UnsafeRawBufferPointer) -> compression_status in
+            guard let srcBase = src.baseAddress else { return COMPRESSION_STATUS_ERROR }
 
-            let decoded = data.withUnsafeBytes { (src: UnsafeRawBufferPointer) -> Int in
-                guard let srcBase = src.baseAddress else { return 0 }
-                return buffer.withUnsafeMutableBytes { (dst: UnsafeMutableRawBufferPointer) -> Int in
-                    guard let dstBase = dst.baseAddress else { return 0 }
-                    return compression_decode_buffer(
-                        dstBase.assumingMemoryBound(to: UInt8.self),
-                        dst.count,
-                        srcBase.assumingMemoryBound(to: UInt8.self),
-                        data.count,
-                        nil,
-                        COMPRESSION_ZLIB
-                    )
+            var stream = compression_stream(
+                dst_ptr: nil, dst_size: 0,
+                src_ptr: srcBase.assumingMemoryBound(to: UInt8.self),
+                src_size: data.count,
+                state: nil
+            )
+
+            guard compression_stream_init(&stream, COMPRESSION_STREAM_DECODE, COMPRESSION_ZLIB) == COMPRESSION_STATUS_OK else {
+                return COMPRESSION_STATUS_ERROR
+            }
+            defer { compression_stream_destroy(&stream) }
+
+            // Buffer đích cố định 64 KB — đủ cho hầu hết script RGSS.
+            var dstBuffer = [UInt8](repeating: 0, count: 64 * 1024)
+
+            // Guard chống infinite loop: track tiến triển thực tế.
+            // Nếu 2 lần gọi liên tiếp không sản xuất output và không tiêu thụ
+            // input → dữ liệu hỏng (hoặc stream không thể tiến triển).
+            var lastSrcSize = data.count
+            var noProgressCount = 0
+
+            while true {
+                // Pattern chuẩn: gọi process với flag 0 cho đến khi hết input,
+                // rồi mới gọi với COMPRESSION_STREAM_FINALIZE để kết thúc.
+                // Gọi FINALIZE ngay từ đầu khi input chưa hết có thể gây lỗi.
+                let flag = (stream.src_size == 0)
+                    ? Int32(COMPRESSION_STREAM_FINALIZE.rawValue)
+                    : 0
+
+                guard let dstBase = dstBuffer.withUnsafeMutableBytes({ $0.baseAddress }) else {
+                    return COMPRESSION_STATUS_ERROR
                 }
-            }
+                stream.dst_ptr = dstBase.assumingMemoryBound(to: UInt8.self)
+                stream.dst_size = dstBuffer.count
 
-            if decoded < capacity {
-                // Đã decode hết toàn bộ input
-                output.append(buffer, count: decoded)
-                return output
+                let status = compression_stream_process(&stream, flag)
+                let produced = dstBuffer.count - Int(stream.dst_size)
+                if produced > 0 {
+                    output.append(dstBuffer, count: produced)
+                }
+                if output.count > maxDecompressedSize {
+                    return COMPRESSION_STATUS_ERROR  // vượt giới hạn an toàn
+                }
+
+                if status == COMPRESSION_STATUS_END {
+                    return COMPRESSION_STATUS_OK
+                }
+                if status != COMPRESSION_STATUS_OK {
+                    return status
+                }
+
+                // Kiểm tra tiến triển: input tiêu thụ hoặc output sản xuất.
+                let consumed = lastSrcSize - Int(stream.src_size)
+                if produced == 0 && consumed == 0 {
+                    noProgressCount += 1
+                    if noProgressCount >= 2 {
+                        return COMPRESSION_STATUS_ERROR  // dữ liệu hỏng
+                    }
+                } else {
+                    noProgressCount = 0
+                }
+                lastSrcSize = Int(stream.src_size)
             }
-            // Output có thể vẫn chưa hết — tăng capacity và decode lại từ đầu
-            capacity *= 2
         }
-        return nil
+
+        return status == COMPRESSION_STATUS_OK ? output : nil
     }
 }
