@@ -248,12 +248,12 @@ struct TranslationOverlayView: View {
 
     private func resetFadeTimer() {
         fadeTimer?.invalidate()
-        // a4 fix: capture self weakly — Timer.scheduledTimer retains its
-        // closure, and the closure retaining self would create a retain cycle
-        // (self → fadeTimer → closure → self) that leaks the view after the
-        // game exits.
-        fadeTimer = Timer.scheduledTimer(withTimeInterval: FADE_DELAY, repeats: false) { [weak self] _ in
-            Task { @MainActor in self?.hideOverlay() }
+        // a4 fix: TranslationOverlayView là struct (SwiftUI View) — không dùng
+        // được [weak self] (chỉ hợp lệ cho class). Capture struct copy trực tiếp:
+        // @State dùng shared storage box nên mutation qua self.hideOverlay()
+        // vẫn cập nhật đúng state của view đang hiển thị.
+        fadeTimer = Timer.scheduledTimer(withTimeInterval: FADE_DELAY, repeats: false) { _ in
+            Task { @MainActor in self.hideOverlay() }
         }
     }
 }

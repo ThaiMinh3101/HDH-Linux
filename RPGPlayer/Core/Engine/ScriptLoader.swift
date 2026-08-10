@@ -222,8 +222,23 @@ enum ScriptLoader {
         let status = data.withUnsafeBytes { (src: UnsafeRawBufferPointer) -> compression_status in
             guard let srcBase = src.baseAddress else { return COMPRESSION_STATUS_ERROR }
 
+            // Buffer đích cố định 64 KB — đủ cho hầu hết script RGSS.
+            // Khai báo TRƯỚC stream init vì cần con trỏ hợp lệ cho dst_ptr.
+            var dstBuffer = [UInt8](repeating: 0, count: 64 * 1024)
+
+            // compression_stream dùng memberwise init — dst_ptr là
+            // UnsafeMutablePointer<UInt8> KHÔNG optional (truyền nil gây lỗi
+            // compile "expected argument type"), và Swift KHÔNG tự sinh no-arg
+            // init cho C struct có pointer fields. Vì vậy phải truyền con trỏ
+            // thật tới dstBuffer (sống cùng scope — buffer không bị thu hồi).
+            // dst_ptr được set lại mỗi vòng lặp bên dưới nên giá trị ban đầu
+            // chỉ cần hợp lệ, không cần chính xác.
+            let dstPtr = dstBuffer.withUnsafeMutableBytes {
+                $0.baseAddress!.assumingMemoryBound(to: UInt8.self)
+            }
             var stream = compression_stream(
-                dst_ptr: nil, dst_size: 0,
+                dst_ptr: dstPtr,
+                dst_size: dstBuffer.count,
                 src_ptr: srcBase.assumingMemoryBound(to: UInt8.self),
                 src_size: data.count,
                 state: nil
@@ -233,9 +248,6 @@ enum ScriptLoader {
                 return COMPRESSION_STATUS_ERROR
             }
             defer { compression_stream_destroy(&stream) }
-
-            // Buffer đích cố định 64 KB — đủ cho hầu hết script RGSS.
-            var dstBuffer = [UInt8](repeating: 0, count: 64 * 1024)
 
             // Guard chống infinite loop: track tiến triển thực tế.
             // Nếu 2 lần gọi liên tiếp không sản xuất output và không tiêu thụ
