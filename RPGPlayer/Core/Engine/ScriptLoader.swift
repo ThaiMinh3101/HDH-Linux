@@ -259,13 +259,17 @@ enum ScriptLoader {
                 // Pattern chuẩn: gọi process với flag 0 cho đến khi hết input,
                 // rồi mới gọi với COMPRESSION_STREAM_FINALIZE để kết thúc.
                 // Gọi FINALIZE ngay từ đầu khi input chưa hết có thể gây lỗi.
-                // COMPRESSION_STREAM_FINALIZE đã có type compression_stream_flags
-                // (= UInt32) — KHÔNG cần Int32(...) chuyển kiểu (UInt32 không
-                // conform BinaryFloatingPoint → Int32(_:) không tồn tại, gây
-                // lỗi compile). 0 literal tự ép về compression_stream_flags.
-                let flag: compression_stream_flags = (stream.src_size == 0)
-                    ? COMPRESSION_STREAM_FINALIZE
-                    : 0
+                // COMPRESSION_STREAM_FINALIZE import sang Swift có type
+                // compression_stream_flags (= UInt32). Ternary `? FINALIZE : 0`
+                // gây mismatch type (0 literal suy ra Int, annotation không
+                // propagate vào ternary) — dùng if/else để ép kiểu qua phép
+                // gán đơn (annotation context áp dụng chắc chắn).
+                let flag: compression_stream_flags
+                if stream.src_size == 0 {
+                    flag = COMPRESSION_STREAM_FINALIZE
+                } else {
+                    flag = 0
+                }
 
 
                 guard let dstBase = dstBuffer.withUnsafeMutableBytes({ $0.baseAddress }) else {
