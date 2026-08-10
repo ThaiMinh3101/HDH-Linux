@@ -124,6 +124,17 @@ jobs:
           fi
           echo "✅ Archive thành công: build/RPGPlayer.xcarchive"
 
+      # ── 5b. In lỗi rõ ràng khi archive fail ─────────────────────────────────
+      - name: Print build errors (khi thất bại)
+        if: failure()
+        run: |
+          echo "=== BUILD ERRORS (grep 'error:') ==="
+          grep -n " error:" build_log.txt | head -80 || echo "(không tìm thấy dòng error:)"
+          echo ""
+          echo "=== 100 DÒNG CUỐI BUILD LOG ==="
+          tail -100 build_log.txt || echo "(build_log.txt không tồn tại)"
+
+
       # ── 6. Debug: xác nhận Info.plist đủ key trước khi đóng gói ──────────
       - name: Debug — Verify Info.plist inside archive
         run: |
