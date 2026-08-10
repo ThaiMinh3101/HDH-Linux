@@ -273,7 +273,7 @@ enum ScriptLoader {
                 if stream.src_size == 0 {
                     flag = COMPRESSION_STREAM_FINALIZE
                 } else {
-                    flag = UInt32(0)
+                    flag = compression_stream_flags(rawValue: 0)
                 }
 
 
