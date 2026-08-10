@@ -259,8 +259,12 @@ enum ScriptLoader {
                 // Pattern chuẩn: gọi process với flag 0 cho đến khi hết input,
                 // rồi mới gọi với COMPRESSION_STREAM_FINALIZE để kết thúc.
                 // Gọi FINALIZE ngay từ đầu khi input chưa hết có thể gây lỗi.
-                let flag = (stream.src_size == 0)
-                    ? Int32(COMPRESSION_STREAM_FINALIZE)
+                // COMPRESSION_STREAM_FINALIZE đã có type compression_stream_flags
+                // (= UInt32) — KHÔNG cần Int32(...) chuyển kiểu (UInt32 không
+                // conform BinaryFloatingPoint → Int32(_:) không tồn tại, gây
+                // lỗi compile). 0 literal tự ép về compression_stream_flags.
+                let flag: compression_stream_flags = (stream.src_size == 0)
+                    ? COMPRESSION_STREAM_FINALIZE
                     : 0
 
 
