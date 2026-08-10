@@ -264,11 +264,16 @@ enum ScriptLoader {
                 // gây mismatch type (0 literal suy ra Int, annotation không
                 // propagate vào ternary) — dùng if/else để ép kiểu qua phép
                 // gán đơn (annotation context áp dụng chắc chắn).
+                // compression_stream_flags là typealias UInt32 — literal `0`
+                // suy ra Int không tự ép (lỗi "cannot assign Int to
+                // compression_stream_flags"). COMPRESSION_STREAM_FINALIZE là
+                // constant UInt32 nên gán được trực tiếp; nhánh else phải
+                // ép tường minh UInt32(0).
                 let flag: compression_stream_flags
                 if stream.src_size == 0 {
                     flag = COMPRESSION_STREAM_FINALIZE
                 } else {
-                    flag = 0
+                    flag = UInt32(0)
                 }
 
 
