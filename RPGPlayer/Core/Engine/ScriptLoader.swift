@@ -259,21 +259,16 @@ enum ScriptLoader {
                 // Pattern chuẩn: gọi process với flag 0 cho đến khi hết input,
                 // rồi mới gọi với COMPRESSION_STREAM_FINALIZE để kết thúc.
                 // Gọi FINALIZE ngay từ đầu khi input chưa hết có thể gây lỗi.
-                // COMPRESSION_STREAM_FINALIZE import sang Swift có type
-                // compression_stream_flags (= UInt32). Ternary `? FINALIZE : 0`
-                // gây mismatch type (0 literal suy ra Int, annotation không
-                // propagate vào ternary) — dùng if/else để ép kiểu qua phép
-                // gán đơn (annotation context áp dụng chắc chắn).
-                // compression_stream_flags là typealias UInt32 — literal `0`
-                // suy ra Int không tự ép (lỗi "cannot assign Int to
-                // compression_stream_flags"). COMPRESSION_STREAM_FINALIZE là
-                // constant UInt32 nên gán được trực tiếp; nhánh else phải
-                // ép tường minh UInt32(0).
-                let flag: compression_stream_flags
+                // compression_stream_process nhận flag type Int32.
+                // COMPRESSION_STREAM_FINALIZE import sang Swift là struct
+                // compression_stream_flags (RawRepresentable, rawValue UInt32)
+                // — phải chuyển qua .rawValue. Literal `0` suy ra Int không
+                // tự ép sang Int32 trong if/else → dùng Int32(0) tường minh.
+                let flag: Int32
                 if stream.src_size == 0 {
-                    flag = COMPRESSION_STREAM_FINALIZE
+                    flag = Int32(COMPRESSION_STREAM_FINALIZE.rawValue)
                 } else {
-                    flag = compression_stream_flags(rawValue: 0)
+                    flag = 0
                 }
 
 
