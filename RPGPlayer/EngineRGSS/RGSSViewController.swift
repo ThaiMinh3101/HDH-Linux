@@ -395,9 +395,10 @@ final class RGSSViewController: UIViewController {
         })
 
         // Present trên VC đang hiển thị (tránh warning nếu có VC khác present).
-        if let presenter = presentedViewController ?? self {
-            presenter.present(alert, animated: true)
-        }
+        // `presentedViewController ?? self` luôn non-optional (self là UIViewController)
+        // nên không dùng `if let` được — gán thẳng rồi present.
+        let presenter = presentedViewController ?? self
+        presenter.present(alert, animated: true)
     }
 
     // MARK: - Error display
