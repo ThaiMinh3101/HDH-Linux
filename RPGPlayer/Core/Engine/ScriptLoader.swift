@@ -248,8 +248,9 @@ enum ScriptLoader {
                 // rồi mới gọi với COMPRESSION_STREAM_FINALIZE để kết thúc.
                 // Gọi FINALIZE ngay từ đầu khi input chưa hết có thể gây lỗi.
                 let flag = (stream.src_size == 0)
-                    ? Int32(COMPRESSION_STREAM_FINALIZE.rawValue)
+                    ? Int32(COMPRESSION_STREAM_FINALIZE)
                     : 0
+
 
                 guard let dstBase = dstBuffer.withUnsafeMutableBytes({ $0.baseAddress }) else {
                     return COMPRESSION_STATUS_ERROR
